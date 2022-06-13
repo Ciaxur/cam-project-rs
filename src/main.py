@@ -1,10 +1,24 @@
 import argparse
-import cv2
+import base64
+import http.client
+import json
 import signal
+import ssl
+from datetime import datetime
+from pathlib import Path
+from time import sleep
+
+import cv2
 
 # Relative path to the model and configs, from which the script was invoked.
 MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v2/frozen_inference_graph.pb'
 MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v2/graph.pbtxt'
+IMAGE_STORAGE_PATH = '/mnt/apt_cam_captures'
+API_HOST = 'localhost'
+API_PORT = 3000
+MESSAGE_ENDPOINT = '/telegram/message'
+CLIENT_CERT_PATH = 'certs/cam-client1.crt'
+CLIENT_KEY_PATH = 'certs/cam-client1.key'
 
 def clean_up(video: cv2.VideoCapture) -> None:
     """
@@ -51,7 +65,30 @@ def detect(frame, model: cv2.dnn.Net, score_thresh: int) -> list:
             cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (23, 230, 210), thickness=2)
     return matches
 
-def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: int) -> int:
+def send_message(body: str, b64_image: bytes) -> None:
+    request_headers = {
+        'Content-Type': 'application/json',
+    }
+    request_body = {
+        "chatId": 5039741009,
+        "message": body,
+        "image": b64_image.decode('utf-8'),
+    }
+
+    context= ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+    context.load_cert_chain(CLIENT_CERT_PATH, CLIENT_KEY_PATH)
+    connection = http.client.HTTPSConnection(API_HOST, port=API_PORT, context=context)
+
+    connection.request(
+        method='POST',
+        url=MESSAGE_ENDPOINT,
+        headers=request_headers,
+        body=json.dumps(request_body)
+    )
+    resp = connection.getresponse()
+    print(resp.status, resp.reason)
+
+def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: float, cooldown: int) -> int:
     """
     Run loop which starts reading frames from the video and invoke the
     dnn model on what's being presented in each frame.
@@ -60,9 +97,12 @@ def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: int) -
         video (VideoCapture): OpenCV VideoCapture instance to read frames from.
         model (Net): Deep Neural Network model instance that will be used to
             run on each frame.
+        score_thresh (float): Image detection score threshold (0.0-1.0).
+        cooldown (int): Cooldown in minutes between notifying the user of a
+            image detection.
     """
-    i = 0
-    while i < 5:
+    last_notified = None
+    while True:
         ret, frame = video.read()
 
         if ret != True:
@@ -75,12 +115,26 @@ def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: int) -
         print(f'Resulting matches = {matches}.')
 
         # Check if HOOOMAN was detected.
-        if 72 in matches:
-            print('Detected a HOOOOOMAN!')
-            cv2.imwrite(f'out-dnned_{i}.jpg', frame)
-            i += 1
+        if 1 in matches:
+            # Convert image to a blob that can be send in a post request
+            # to 4bit.api on the /message endpoint.
+            now = datetime.now()
+            img_path = Path(IMAGE_STORAGE_PATH, 'hooman-{}.jpg'.format(str(now)))
+            cv2.imwrite(str(img_path), frame)
+            raw_image = cv2.imencode('.jpg', frame)[1]
+            print('Hooman detected! Saving to', img_path)
 
-    return 0
+            # Have a cooldown for invoking the endpoint. However, save
+            # those images to the external flash drive with timestamps.
+            cooldown_s = cooldown * 60
+            if last_notified == None or (now - last_notified).seconds >= cooldown_s:
+                last_notified = now
+                b64_image = base64.b64encode(raw_image)
+                send_message('Hoooman detected at {}.'.format(
+                    str(now)
+                ), b64_image)
+        
+        sleep(0.5)
 
 def range_limited_float_type(min: float, max: float):
     """ Type function for argparse - a float within some predefined bounds """
@@ -102,6 +156,13 @@ def parse_args() -> argparse.Namespace:
         type=range_limited_float_type(0.0, 1.0),
         default=0.2,
         help='Matching score threshold'
+    )
+    parser.add_argument(
+        '--cooldown', 
+        '-c',
+        type=int,
+        default=5,
+        help='Cooldown in minutes between notifying the user of detected image.'
     )
     return parser.parse_args()
 
@@ -128,7 +189,7 @@ def main():
         return 1
 
     # Adjust frame resolution.
-    video_capture.set(cv2.CAP_PROP_FPS, 30)
+    video_capture.set(cv2.CAP_PROP_FPS, 1)
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 300)
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 300)
 
@@ -140,6 +201,7 @@ def main():
         video_capture, 
         cvNet,
         args.threshold,
+        args.cooldown,
     )
     print('Run loop returned ', loop_status)
     return loop_status

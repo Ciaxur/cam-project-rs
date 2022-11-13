@@ -2,6 +2,7 @@ import argparse
 import base64
 import http.client
 import json
+import logging
 import signal
 import ssl
 from datetime import datetime
@@ -20,18 +21,19 @@ MESSAGE_ENDPOINT = '/telegram/message'
 CLIENT_CERT_PATH = 'certs/cam-client1.crt'
 CLIENT_KEY_PATH = 'certs/cam-client1.key'
 
+
 def clean_up(video: cv2.VideoCapture) -> None:
     """
     Takes care of cleaning up the VideoCapture instance and releasing any
     memory held by OpenCV
     """
-    print('Cleaning up...')
+    logging.info('Cleaning up')
     video.release()
     cv2.destroyAllWindows()
 
 def detect(frame, model: cv2.dnn.Net, score_thresh: int) -> list:
     """
-    NOTE: I think 72 refers to human.
+    NOTE: I think 1 refers to human.
     Run the DNN model on the frame, detecting objects.
 
     Args:
@@ -56,7 +58,7 @@ def detect(frame, model: cv2.dnn.Net, score_thresh: int) -> list:
         score = float(detection[2])
         w = detection[1]
         if score > score_thresh:
-            print('Detected: ', w)
+            logging.info(f'Detected: {w}')
             matches.append(w)
             left = detection[3] * cols
             top = detection[4] * rows
@@ -86,7 +88,10 @@ def send_message(body: str, b64_image: bytes) -> None:
         body=json.dumps(request_body)
     )
     resp = connection.getresponse()
-    print(resp.status, resp.reason)
+    logging.info("[API] Response -> status({}) reason({})".format(
+        resp.status,
+        resp.reason,
+    ))
 
 def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: float, cooldown: int) -> int:
     """
@@ -106,13 +111,13 @@ def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: float,
         ret, frame = video.read()
 
         if ret != True:
-            print('ERROR: Run loop failed to read video frame.')
+            logging.error('[Loop] ERROR: Run loop failed to read video frame')
             return ret
 
         # Lets detect that frame!
-        print('Detecting frame.')
+        logging.debug('[Loop] Detecting frame')
         matches = detect(frame, model, score_thresh)
-        print(f'Resulting matches = {matches}.')
+        logging.debug(f'[Loop] Resulting matches = {matches}')
 
         # Check if HOOOMAN was detected.
         if 1 in matches:
@@ -122,7 +127,7 @@ def start_loop(video: cv2.VideoCapture, model: cv2.dnn.Net, score_thresh: float,
             img_path = Path(IMAGE_STORAGE_PATH, 'hooman-{}.jpg'.format(str(now)))
             cv2.imwrite(str(img_path), frame)
             raw_image = cv2.imencode('.jpg', frame)[1]
-            print('Hooman detected! Saving to', img_path)
+            logging.info(f'[Loop] Hooman detected! Saving to {img_path}')
 
             # Have a cooldown for invoking the endpoint. However, save
             # those images to the external flash drive with timestamps.
@@ -168,7 +173,7 @@ def parse_args() -> argparse.Namespace:
 
 def signal_safe_exit(video: cv2.VideoCapture):
     def _sig_helper_func(signal, frame):
-        print('Interrupt detected: Exiting safely.')
+        logging.info('[Signal] Interrupt detected: Exiting safely')
         clean_up(video)
     return _sig_helper_func
 
@@ -184,7 +189,7 @@ def main():
     signal.signal(signal.SIGINT, signal_safe_exit(video_capture))
 
     if not video_capture.isOpened():
-        print(f'{video_file} failed to open.')
+        logging.error(f'[main] {video_file} failed to open.')
         clean_up(video_capture)
         return 1
 
@@ -197,15 +202,17 @@ def main():
     cvNet = cv2.dnn.readNetFromTensorflow(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
     
     # Start the run loop.
+    logging.info('[main] Starting detection loop')
     loop_status = start_loop(
         video_capture, 
         cvNet,
         args.threshold,
         args.cooldown,
     )
-    print('Run loop returned ', loop_status)
+    logging.info(f'[main] Run loop status returned {loop_status}')
     return loop_status
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     ret = main()
     exit(ret)

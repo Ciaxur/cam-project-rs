@@ -178,6 +178,8 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], model: cv2.dn
                         captured_images.append((esp_cam._device_ip, nd_array))
                     except UnidentifiedImageError:
                         logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam._device_ip}')
+                    except Exception as e:
+                        logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam._device_ip}: {e}')
 
             # Retry the connection if the device is not running.
             else:

@@ -24,8 +24,8 @@ from image_classification_pb2_grpc import ImageClassifierStub
 from VideoDevice import ESP32_CAM
 
 # Classification server configuration.
-CLASSIFY_HOST="192.168.0.2"
-CLASSIFY_PORT=6969
+CLASSIFY_HOST="localhost"
+CLASSIFY_PORT=8000
 
 # Relative path to the model and configs, from which the script was invoked.
 IMAGE_STORAGE_PATH = '/mnt/apt_cam_captures'
@@ -137,7 +137,7 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
             device=device_name,
         )
 
-def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], classify_client: ImageClassifierStub, cooldown: int) -> int:
+def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int) -> int:
     """
     Run loop which starts reading frames from the video and invoke the
     dnn model through a gRPC server on what's being presented in each frame.
@@ -145,10 +145,13 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], classify_clie
     Args:
         video (VideoCapture): OpenCV VideoCapture instance to read frames from.
         esp_cams (List[ESP32_CAM]): List of ESP32 camera instances to query from.
-        classify_client: gRPC client connection with the classficiation server.
         cooldown (int): Cooldown in minutes between notifying the user of a
             image detection.
     """
+    # Setup gRPC client with the classification server.
+    channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
+    classify_client: ImageClassifierStub = ImageClassifierStub(channel)
+
     def _check_and_notify_dection(device_name: str, matches: List[int], frame: numpy.ndarray, last_notified: datetime) -> datetime:
         # Check if HOOOMAN was detected.
         if 1 in matches:
@@ -202,6 +205,12 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help='Cooldown in minutes between notifying the user of detected image.'
     )
+
+    parser.add_argument(
+        '--skip-esp',
+        action='store_true',
+        help='Skips setting up ESP cameras.'
+    )
     return parser.parse_args()
 
 def signal_safe_exit(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]):
@@ -229,18 +238,16 @@ def main():
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT)
 
     # Register ESP Cameras.
-    esp_cams = [
-        ESP32_CAM("192.168.0.9", 3000),
-    ]
-    for esp_cam in esp_cams:
-        try:
-            esp_cam.start()
-        except Exception:
-            logging.error(f"[main] Failed to start ESP Cam connection with {esp_cam._device_ip}")
-
-    # Setup gRPC client with the classification server.
-    channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
-    classification_client = ImageClassifierStub(channel)
+    esp_cams = []
+    if not args.skip_esp:
+        esp_cams = [
+            ESP32_CAM("192.168.0.9", 3000),
+        ]
+        for esp_cam in esp_cams:
+            try:
+                esp_cam.start()
+            except Exception:
+                logging.error(f"[main] Failed to start ESP Cam connection with {esp_cam._device_ip}")
 
     # Register signal handler for safely exiting on interrupt.
     signal.signal(signal.SIGINT, signal_safe_exit(video_capture, esp_cams))
@@ -252,7 +259,6 @@ def main():
         loop_status = start_loop(
             video_capture,
             esp_cams,
-            classification_client,
             args.cooldown,
         )
         logging.info(f'[main] Run loop status returned {loop_status}')

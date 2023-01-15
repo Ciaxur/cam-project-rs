@@ -6,6 +6,7 @@ import argparse
 import logging
 import pickle
 from concurrent import futures
+from typing import List, Tuple
 
 import cv2
 import grpc
@@ -17,6 +18,7 @@ import image_classification_pb2_grpc
 # DNN model paths.
 MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v3/frozen_inference_graph.pb'
 MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v3/graph.pbtxt'
+from common import IMAGE_HEIGHT, IMAGE_WIDTH
 
 # Server configs.
 PORT=6969
@@ -30,15 +32,20 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
     threshold: int
 
     def __init__(self, threshold: int) -> None:
-        # Load up the DNN model.
+        # Load & configure the DNN model.
         logging.debug(f"Loading model from {MODEL_CONFIG_PATH} | {MODEL_WEIGHTS_PATH}")
-        self.model = cv2.dnn.readNetFromTensorflow(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
+        self.model = cv2.dnn_DetectionModel(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
+        self.model.setInputSize(IMAGE_WIDTH, IMAGE_HEIGHT)
+        self.model.setInputScale(1.0 / 127.5)
+        self.model.setInputMean((127.5, 127.5, 127.5))
+        self.model.setInputSwapRB(True)
+
         self.threshold = threshold
 
         super().__init__()
 
     @staticmethod
-    def detect(frame: numpy.ndarray, model: cv2.dnn.Net, score_thresh: int) -> list:
+    def detect(frame: numpy.ndarray, model: cv2.dnn_DetectionModel, score_thresh: int) -> Tuple[List[int], List[float]]:
         """
         NOTE: I think 1 refers to human.
         Run the DNN model on the frame, detecting objects.
@@ -48,34 +55,26 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             model: The DNN instance.
             score_thresh: The score's minimum threshold.
         Returns:
-            A list of detected objects.
+            A tuple containing a list of match ids and a list of their corresponding confidence scores.
         """
-        rows = frame.shape[0]
-        cols = frame.shape[1]
-        blob = cv2.dnn.blobFromImage(frame, size=(rows,cols), swapRB=True, crop=True)
-        logging.debug(f"Detecting image of shape rows={rows} cols={cols}")
-
         # Apply the image through the DNN.
         logging.debug("Applying image through the DNN")
-        model.setInput(blob)
-        cvOut = model.forward()
+        classes, confidences, boxes = model.detect(frame, confThreshold=score_thresh)
 
-        # Iterate through the results, checking if there was a match and
-        # apply the matches to the image.
+        # Early return on no results.
         matches = []
-        for detection in cvOut[0,0,:,:]:
-            score = float(detection[2])
-            logging.debug(f"Resolved to a detection score of {score}")
-            w = detection[1]
-            if score > score_thresh:
-                logging.info(f'Detected: {w}')
-                matches.append(w)
-                left = detection[3] * cols
-                top = detection[4] * rows
-                right = detection[5] * cols
-                bottom = detection[6] * rows
-                cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (23, 230, 210), thickness=2)
-        return matches
+        scores = []
+        if len(classes) == 0:
+            return (matches, scores,)
+
+        # Label results
+        for classId, confidence, box in zip(classes.flatten(), confidences.flatten(), boxes):
+            logging.info(f'Detection score: classId={classId} | confidence={confidence}')
+            matches.append(classId)
+            scores.append(confidence)
+            cv2.rectangle(frame, box, color=(0, 255, 0))
+
+        return (matches, scores,)
 
     def ClassifyImage(self, request_iterator: image_classification_pb2.ClassifyImageRequest, context):
         """
@@ -94,7 +93,7 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             frame = pickle.loads(request.image)
 
             # Classify the image.
-            matches: numpy.array = self.detect(frame, self.model, self.threshold)
+            matches, scores = self.detect(frame, self.model, self.threshold)
             logging.info(f'Image for device={request.device} matched={len(matches)}')
             logging.debug(f'Matches={list(matches)}')
 
@@ -106,6 +105,7 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
                 matches=list(matches),
                 image=encoded_frame,
                 device=request.device,
+                match_scores=list(scores),
             )
 
 

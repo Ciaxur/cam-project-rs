@@ -1,0 +1,3 @@
+# Expected image.
+IMAGE_WIDTH = 300
+IMAGE_HEIGHT = 300

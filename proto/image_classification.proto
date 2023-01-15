@@ -11,6 +11,9 @@ message ClassifyImageResponse {
 
   // Device IP/name which captured the image.
   string device = 3;
+
+  // Contains a lsit of confidence scores for each match in order.
+  repeated float match_scores = 4;
 }
 
 message ClassifyImageRequest {

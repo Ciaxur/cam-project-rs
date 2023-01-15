@@ -36,8 +36,9 @@ CLIENT_CERT_PATH = 'certs/cam-client1.crt'
 CLIENT_KEY_PATH = 'certs/cam-client1.key'
 
 # Classification configuration.
-IMAGE_WIDTH = 300
-IMAGE_HEIGHT = 300
+from common import (
+    IMAGE_HEIGHT, IMAGE_WIDTH
+)
 IS_RUNNING = True
 
 

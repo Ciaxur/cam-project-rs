@@ -31,6 +31,7 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
 
     def __init__(self, threshold: int) -> None:
         # Load up the DNN model.
+        logging.debug(f"Loading model from {MODEL_CONFIG_PATH} | {MODEL_WEIGHTS_PATH}")
         self.model = cv2.dnn.readNetFromTensorflow(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
         self.threshold = threshold
 
@@ -52,8 +53,10 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
         rows = frame.shape[0]
         cols = frame.shape[1]
         blob = cv2.dnn.blobFromImage(frame, size=(rows,cols), swapRB=True, crop=True)
+        logging.debug(f"Detecting image of shape rows={rows} cols={cols}")
 
         # Apply the image through the DNN.
+        logging.debug("Applying image through the DNN")
         model.setInput(blob)
         cvOut = model.forward()
 
@@ -62,6 +65,7 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
         matches = []
         for detection in cvOut[0,0,:,:]:
             score = float(detection[2])
+            logging.debug(f"Resolved to a detection score of {score}")
             w = detection[1]
             if score > score_thresh:
                 logging.info(f'Detected: {w}')

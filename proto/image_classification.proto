@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package Classifier;
+option go_package = "proto/image_classifier";
 
 message ClassifyImageResponse {
   // Contains a list of classification identifier results.

@@ -2,12 +2,20 @@
 
 SCRIPTS_DIR=$(realpath "$(dirname "$0")")
 PROTO_DIR="$SCRIPTS_DIR/../proto"
-SRC_DIR="$SCRIPTS_DIR/../src"
+ROOT_DIR="$SCRIPTS_DIR/.."
 
-echo "Compiling *.proto..."
+echo "[python] Compiling *.proto..."
 find "$PROTO_DIR" -maxdepth 1 -name '*.proto' | xargs -I {} \
   python -m grpc_tools.protoc \
     -I="$PROTO_DIR" \
-    --python_out="$SRC_DIR" \
-    --grpc_python_out="$SRC_DIR" \
+    --python_out="$PROTO_DIR" \
+    --grpc_python_out="$PROTO_DIR" \
+    {};
+
+
+echo "[golang] Compiling *.proto..."
+find "$PROTO_DIR" -maxdepth 1 -name '*.proto' | xargs -I {} \
+  protoc \
+    -I="$PROTO_DIR" \
+    --go_out="$ROOT_DIR" \
     {};

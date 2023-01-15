@@ -1,2 +1,5 @@
 opencv-python
 pillow
+grpcio-tools
+grpcio
+python-grpc

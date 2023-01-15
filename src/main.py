@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
 import argparse
 import base64
 import http.client
 import json
 import logging
+import pickle
 import signal
 import ssl
 import traceback
@@ -10,17 +12,22 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from time import sleep
-from typing import List, Tuple
+from typing import Generator, List, Tuple
 
 import cv2
+import grpc
 import numpy
 from PIL import Image, UnidentifiedImageError
 
+import image_classification_pb2
+from image_classification_pb2_grpc import ImageClassifierStub
 from VideoDevice import ESP32_CAM
 
+# Classification server configuration.
+CLASSIFY_HOST="192.168.0.2"
+CLASSIFY_PORT=6969
+
 # Relative path to the model and configs, from which the script was invoked.
-MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v2/frozen_inference_graph.pb'
-MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v2/graph.pbtxt'
 IMAGE_STORAGE_PATH = '/mnt/apt_cam_captures'
 API_HOST = 'localhost'
 API_PORT = 3000
@@ -50,42 +57,6 @@ def clean_up(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> None:
         logging.info(f'Stopping ESP Camera {esp_cam._device_ip}')
         esp_cam.stop()
 
-def detect(frame, model: cv2.dnn.Net, score_thresh: int) -> list:
-    """
-    NOTE: I think 1 refers to human.
-    Run the DNN model on the frame, detecting objects.
-
-    Args:
-        frame: Captured frame to run through dnn.
-        model: The DNN instance.
-        score_thresh: The score's minimum threshold.
-    Returns:
-        A list of detected objects.
-    """
-    rows = frame.shape[0]
-    cols = frame.shape[1]
-    blob = cv2.dnn.blobFromImage(frame, size=(rows,cols), swapRB=True, crop=True)
-
-    # Apply the image through the DNN.
-    model.setInput(blob)
-    cvOut = model.forward()
-
-    # Iterate through the results, checking if there was a match and
-    # apply the matches to the image.
-    matches = []
-    for detection in cvOut[0,0,:,:]:
-        score = float(detection[2])
-        w = detection[1]
-        if score > score_thresh:
-            logging.info(f'Detected: {w}')
-            matches.append(w)
-            left = detection[3] * cols
-            top = detection[4] * rows
-            right = detection[5] * cols
-            bottom = detection[6] * rows
-            cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (23, 230, 210), thickness=2)
-    return matches
-
 def send_message(body: str, b64_image: bytes) -> None:
     request_headers = {
         'Content-Type': 'application/json',
@@ -112,21 +83,73 @@ def send_message(body: str, b64_image: bytes) -> None:
         resp.reason,
     ))
 
-def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], model: cv2.dnn.Net, score_thresh: float, cooldown: int) -> int:
+def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Generator[image_classification_pb2.ClassifyImageRequest, None, None]:
+    """
+        Capture images from the variuos video input devices, generating gRPC request stream messages.
+
+        Args:
+            video: VideoCapture instance to real camera hardware.
+            esp_cams: List of known ESP32 cameras to query image from.
+
+        Returns:
+            Image classify request streams.
+    """
+    # Captured images are tuples of the device name and the ndarray that was captured.
+    captured_images: List[Tuple[str, numpy.ndarray]] = []
+
+    # Capture frame from the connected video device (video0).
+    ret, frame = video.read()
+    if ret != True:
+        logging.error('[loop] ERROR: Run loop failed to read video frame')
+    else:
+        captured_images.append(('video0', frame))
+
+    # Query frame from ESP32 devices.
+    for esp_cam in esp_cams:
+        # Grab
+        if esp_cam.is_running():
+            img = esp_cam.get_image(blocking=False)
+            esp_cam.clear_images()
+            if img:
+                # Convert requested image to an ndarray (numpy) of which the DNN can understand.
+                try:
+                    _img = Image.open(BytesIO(img))
+                    _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
+                    nd_array = numpy.asarray(_img)
+                    logging.debug(f'[loop] ESP Device {esp_cam._device_ip} captured image -> {nd_array.shape}')
+                    captured_images.append((esp_cam._device_ip, nd_array))
+                except UnidentifiedImageError:
+                    logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam._device_ip}')
+                except Exception as e:
+                    logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam._device_ip}: {e}')
+
+        # Retry the connection if the device is not running.
+        else:
+            try:
+                esp_cam.start()
+            except Exception:
+                logging.error(f'[loop] Failed to start ESP Cam connection with {esp_cam._device_ip}')
+
+    # Create a generator for the captured images.
+    for device_name, frame in captured_images:
+        yield image_classification_pb2.ClassifyImageRequest(
+            image=pickle.dumps(frame),
+            device=device_name,
+        )
+
+def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], classify_client: ImageClassifierStub, cooldown: int) -> int:
     """
     Run loop which starts reading frames from the video and invoke the
-    dnn model on what's being presented in each frame.
+    dnn model through a gRPC server on what's being presented in each frame.
 
     Args:
         video (VideoCapture): OpenCV VideoCapture instance to read frames from.
         esp_cams (List[ESP32_CAM]): List of ESP32 camera instances to query from.
-        model (Net): Deep Neural Network model instance that will be used to
-            run on each frame.
-        score_thresh (float): Image detection score threshold (0.0-1.0).
+        classify_client: gRPC client connection with the classficiation server.
         cooldown (int): Cooldown in minutes between notifying the user of a
             image detection.
     """
-    def _check_and_notify_dection(device_name: str, frame: numpy.ndarray, last_notified: datetime) -> datetime:
+    def _check_and_notify_dection(device_name: str, matches: List[int], frame: numpy.ndarray, last_notified: datetime) -> datetime:
         # Check if HOOOMAN was detected.
         if 1 in matches:
             # Convert image to a blob that can be send in a post request
@@ -148,81 +171,32 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], model: cv2.dn
                     str(now),
                 ), b64_image)
                 return now
-    
+
     last_notified = None
     global IS_RUNNING
     while IS_RUNNING:
-        # Captured images are tuples of the device name and the ndarray that was captured.
-        captured_images: List[Tuple[str, numpy.ndarray]] = []
-        
-        # Capture frame from the connected video device (video0).
-        ret, frame = video.read()
-        if ret != True:
-            logging.error('[loop] ERROR: Run loop failed to read video frame')
-        else:
-            captured_images.append(('video0', frame))
-
-        # Query frame from ESP32 devices.
-        for esp_cam in esp_cams:
-            # Grab 
-            if esp_cam.is_running():
-                img = esp_cam.get_image(blocking=False)
-                esp_cam.clear_images()
-                if img:
-                    # Convert requested image to an ndarray (numpy) of which the DNN can understand.
-                    try:
-                        _img = Image.open(BytesIO(img))
-                        _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
-                        nd_array = numpy.asarray(_img)
-                        logging.debug(f'[loop] ESP Device {esp_cam._device_ip} captured image -> {nd_array.shape}')
-                        captured_images.append((esp_cam._device_ip, nd_array))
-                    except UnidentifiedImageError:
-                        logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam._device_ip}')
-                    except Exception as e:
-                        logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam._device_ip}: {e}')
-
-            # Retry the connection if the device is not running.
-            else:
-                try:
-                    esp_cam.start()
-                except Exception:
-                    logging.error(f'[loop] Failed to start ESP Cam connection with {esp_cam._device_ip}')
-
         # Lets detect captured images.
-        logging.info(f'[loop] Running DNN on {len(captured_images)} captured images')
-        for device_name, frame in captured_images:
-            matches = detect(frame, model, score_thresh)
-            logging.debug(f'[loop] Match results from {device_name} = {matches}')
+        for classfied_image in classify_client.ClassifyImage(capture_images(video, esp_cams)):
+            # classfied_image.matches
+            logging.debug(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
 
-            notified = _check_and_notify_dection(device_name, frame, last_notified)
+            # Extract the ndarray frame from the response.
+            frame = pickle.loads(classfied_image.image)
+
+            # Check if matches merit notifying a detection.
+            notified = _check_and_notify_dection(
+                classfied_image.device,
+                classfied_image.matches,
+                frame,
+                last_notified
+            )
             if notified:
                 last_notified = notified
-        
-        sleep(0.5)
-
-def range_limited_float_type(min: float, max: float):
-    """ Type function for argparse - a float within some predefined bounds """
-    def _inner(arg):
-        try:
-            f = float(arg)
-        except ValueError:    
-            raise argparse.ArgumentTypeError("Must be a floating point number")
-        if f < min or f > max:
-            raise argparse.ArgumentTypeError("Argument must be < " + str(max) + "and > " + str(min))
-        return f
-    return _inner
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start detecting those HOOMANS")
     parser.add_argument(
-        '--threshold', 
-        '-t',
-        type=range_limited_float_type(0.0, 1.0),
-        default=0.2,
-        help='Matching score threshold'
-    )
-    parser.add_argument(
-        '--cooldown', 
+        '--cooldown',
         '-c',
         type=int,
         default=5,
@@ -264,28 +238,28 @@ def main():
         except Exception:
             logging.error(f"[main] Failed to start ESP Cam connection with {esp_cam._device_ip}")
 
-    # Load model.
-    cvNet = cv2.dnn.readNetFromTensorflow(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
-    
+    # Setup gRPC client with the classification server.
+    channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
+    classification_client = ImageClassifierStub(channel)
+
     # Register signal handler for safely exiting on interrupt.
     signal.signal(signal.SIGINT, signal_safe_exit(video_capture, esp_cams))
-    
+
     # Start the run loop.
     logging.info('[main] Starting detection loop')
     loop_status = False
     try:
         loop_status = start_loop(
-            video_capture, 
+            video_capture,
             esp_cams,
-            cvNet,
-            args.threshold,
+            classification_client,
             args.cooldown,
         )
         logging.info(f'[main] Run loop status returned {loop_status}')
     except Exception as e:
         logging.error(f'[main] Unexpected exception: {e}')
         traceback.print_exception(type(e), e, e.__traceback__)
-        
+
     finally:
         clean_up(video_capture, esp_cams)
     return loop_status

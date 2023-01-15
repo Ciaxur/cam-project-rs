@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package Classifier;
+
+message ClassifyImageResponse {
+  // Contains a list of classification identifier results.
+  repeated float matches = 1;
+
+  // Contains serialized ndarray of the classified image outlined with the match.
+  bytes image = 2;
+
+  // Device IP/name which captured the image.
+  string device = 3;
+}
+
+message ClassifyImageRequest {
+  // Contains serialized ndarray of the image to classify.
+  bytes  image = 1;
+
+  // Device IP/name which captured the image.
+  string device = 2;
+}
+
+service ImageClassifier {
+  rpc ClassifyImage(stream ClassifyImageRequest) returns (stream ClassifyImageResponse);
+};

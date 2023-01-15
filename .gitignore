@@ -1,3 +1,4 @@
 *.jpg
 opencv-venv
 *.pyc
+*_pb2*.py

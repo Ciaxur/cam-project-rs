@@ -15,14 +15,14 @@ import image_classification_pb2
 import image_classification_pb2_grpc
 
 # DNN model paths.
-MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v2/frozen_inference_graph.pb'
-MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v2/graph.pbtxt'
+MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v3/frozen_inference_graph.pb'
+MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v3/graph.pbtxt'
 
 # Server configs.
 PORT=6969
 
 # Configure logging.
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierServicer):

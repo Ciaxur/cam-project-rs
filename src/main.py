@@ -150,10 +150,14 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
             image detection.
     """
     # Setup gRPC client with the classification server.
-    channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
-    classify_client: ImageClassifierStub = ImageClassifierStub(channel)
+    # A helper function in which can be invoked to re-establish the channel upon a disconnect.
+    def _setup_grpc_client() -> ImageClassifierStub:
+        channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
+        classify_client: ImageClassifierStub = ImageClassifierStub(channel)
+        return classify_client
 
-    def _check_and_notify_dection(device_name: str, matches: List[int], frame: numpy.ndarray, last_notified: datetime) -> datetime:
+    # Checks the results and issues notification to the user.
+    def _check_and_notify_dection(device_name: str, matches: List[int], match_scores: List[float], frame: numpy.ndarray, last_notified: datetime) -> datetime:
         # Check if HOOOMAN was detected.
         if 1 in matches:
             # Convert image to a blob that can be send in a post request
@@ -170,32 +174,48 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
             if last_notified == None or (now - last_notified).seconds >= cooldown_s:
                 last_notified = now
                 b64_image = base64.b64encode(raw_image)
-                send_message('[Device={}] Hoooman detected at {}.'.format(
+                send_message('[Device={}|Scores={}] Hoooman detected at {}.'.format(
                     device_name,
+                    match_scores,
                     str(now),
                 ), b64_image)
                 return now
 
+
     last_notified = None
+    classify_client = _setup_grpc_client()
     global IS_RUNNING
     while IS_RUNNING:
         # Lets detect captured images.
-        for classfied_image in classify_client.ClassifyImage(capture_images(video, esp_cams)):
-            # classfied_image.matches
-            logging.debug(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
+        try:
+            for classfied_image in classify_client.ClassifyImage(capture_images(video, esp_cams)):
+                # classfied_image.matches
+                logging.debug(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
 
-            # Extract the ndarray frame from the response.
-            frame = pickle.loads(classfied_image.image)
+                # Extract the ndarray frame from the response.
+                frame = pickle.loads(classfied_image.image)
 
-            # Check if matches merit notifying a detection.
-            notified = _check_and_notify_dection(
-                classfied_image.device,
-                classfied_image.matches,
-                frame,
-                last_notified
-            )
-            if notified:
-                last_notified = notified
+                # Check if matches merit notifying a detection.
+                notified = _check_and_notify_dection(
+                    classfied_image.device,
+                    classfied_image.matches,
+                    classfied_image.match_scores,
+                    frame,
+                    last_notified
+                )
+                if notified:
+                    last_notified = notified
+        except grpc.RpcError as e:
+            e.details()
+
+            # Handle disconnected errors.
+            if e.code() == grpc.StatusCode.UNAVAILABLE:
+                logging.warning(f'gRPC Server possibly disconnected with an UNAVAILABLE status code. Retrying connection...')
+                classify_client = _setup_grpc_client()
+
+        except Exception as e:
+            logging.error("Unhandled exception occurred")
+            raise e
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start detecting those HOOMANS")
@@ -266,7 +286,6 @@ def main():
     except Exception as e:
         logging.error(f'[main] Unexpected exception: {e}')
         traceback.print_exception(type(e), e, e.__traceback__)
-
     finally:
         clean_up(video_capture, esp_cams)
     return loop_status

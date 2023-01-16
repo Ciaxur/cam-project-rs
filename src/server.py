@@ -95,7 +95,6 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             # Classify the image.
             matches, scores = self.detect(frame, self.model, self.threshold)
             logging.info(f'Image for device={request.device} matched={len(matches)}')
-            logging.debug(f'Matches={list(matches)}')
 
             # Encode the new frame with a potentially outlined match(es).
             encoded_frame = pickle.dumps(frame)
@@ -135,7 +134,13 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=4),
+        options=[
+            ("grpc.max_receive_message_length", IMAGE_WIDTH*IMAGE_HEIGHT*20),
+            ("grpc.max_send_message_length", IMAGE_WIDTH*IMAGE_HEIGHT*20),
+        ]
+    )
     image_classification_pb2_grpc.add_ImageClassifierServicer_to_server(ImageClassifierServer(
         threshold=args.threshold,
     ), server)

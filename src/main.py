@@ -44,7 +44,7 @@ IS_RUNNING = True
 # Array of tuples containing IP and port to poll from ESP devices.
 # Device name is optional. Default it to empty string.
 ESP_DEVICES = [
-    ("door_cam0", "192.168.0.9", 3000)
+    ("door_cam0", "192.168.0.13", 3000)
 ]
 VIDEO0_DEVICE_NAME = "video0"
 
@@ -124,12 +124,12 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
                     _img = Image.open(BytesIO(img))
                     _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
                     nd_array = numpy.asarray(_img)
-                    logging.debug(f'[loop] ESP Device {esp_cam._device_ip} captured image -> {nd_array.shape}')
-                    captured_images.append((esp_cam._device_ip, nd_array))
+                    logging.debug(f'[loop] ESP Device {esp_cam.device_name} captured image -> {nd_array.shape}')
+                    captured_images.append((esp_cam.device_name, nd_array))
                 except UnidentifiedImageError:
-                    logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam._device_ip}')
+                    logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam.device_name}')
                 except Exception as e:
-                    logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam._device_ip}: {e}')
+                    logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam.device_name}: {e}')
 
         # Retry the connection if the device is not running.
         else:
@@ -194,6 +194,10 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
         VIDEO0_DEVICE_NAME: None,
         **{ f'{dev.device_name}': None for dev in esp_cams },
     }
+    logging.info("Constructed cooldown map:")
+    for key, val in last_notified.items():
+        logging.info(f"- {key}: {val}")
+
 
     classify_client = _setup_grpc_client()
     global IS_RUNNING

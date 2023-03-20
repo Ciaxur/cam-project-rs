@@ -8,6 +8,8 @@ from time import sleep
 
 
 class ESP32_CAM():
+    device_name: str
+    _device_name: str
     _device_ip: str
     _device_port: int
     _data_end: str = b"\r\nDone\r\n"
@@ -20,11 +22,15 @@ class ESP32_CAM():
     _queue_size = 5     # Buffer latest 5 images.
     _queue: deque
 
-    def __init__(self, device_ip: str, device_port: int, verbose=False) -> None:
+    def __init__(self, device_ip: str, device_port: int, device_name="", verbose=False) -> None:
+        self._device_name = device_name
         self._device_ip = device_ip
         self._device_port = device_port
         self._queue = deque()
         self._verbose = verbose
+
+        # Construct device name.
+        self.device_name = device_ip if device_name == "" else f"{device_name}:{device_ip}"
 
     def _start_image_query_thread(self) -> None:
         logging.info('[Image Query] Attempting to start image query thread')

@@ -12,7 +12,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from time import sleep
-from typing import Generator, List, Tuple
+from typing import Generator, List, Tuple, Dict
 
 import cv2
 import grpc
@@ -40,6 +40,13 @@ from common import (
     IMAGE_HEIGHT, IMAGE_WIDTH
 )
 IS_RUNNING = True
+
+# Array of tuples containing IP and port to poll from ESP devices.
+# Device name is optional. Default it to empty string.
+ESP_DEVICES = [
+    ("door_cam0", "192.168.0.9", 3000)
+]
+VIDEO0_DEVICE_NAME = "video0"
 
 
 def clean_up(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> None:
@@ -98,12 +105,12 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
     # Captured images are tuples of the device name and the ndarray that was captured.
     captured_images: List[Tuple[str, numpy.ndarray]] = []
 
-    # Capture frame from the connected video device (video0).
+    # Capture frame from the connected video device.
     ret, frame = video.read()
     if ret != True:
         logging.error('[loop] ERROR: Run loop failed to read video frame')
     else:
-        captured_images.append(('video0', frame))
+        captured_images.append((VIDEO0_DEVICE_NAME, frame))
 
     # Query frame from ESP32 devices.
     for esp_cam in esp_cams:
@@ -182,7 +189,12 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
                 return now
 
 
-    last_notified = None
+    # Track cooldowns based on device name.
+    last_notified: Dict[str, datetime] = {
+        VIDEO0_DEVICE_NAME: None,
+        **{ f'{dev.device_name}': None for dev in esp_cams },
+    }
+
     classify_client = _setup_grpc_client()
     global IS_RUNNING
     while IS_RUNNING:
@@ -201,10 +213,10 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
                     classfied_image.matches,
                     classfied_image.match_scores,
                     frame,
-                    last_notified
+                    last_notified[classfied_image.device],
                 )
                 if notified:
-                    last_notified = notified
+                    last_notified[classfied_image.device] = notified
         except grpc.RpcError as e:
             e.details()
 
@@ -245,7 +257,7 @@ def main():
     args = parse_args()
 
     # Open and check that we can read from the video camera.
-    video_file = "/dev/video0"
+    video_file = f"/dev/{VIDEO0_DEVICE_NAME}"
     video_capture = cv2.VideoCapture(video_file)
 
     if not video_capture.isOpened():
@@ -262,7 +274,8 @@ def main():
     esp_cams = []
     if not args.skip_esp:
         esp_cams = [
-            ESP32_CAM("192.168.0.9", 3000),
+            ESP32_CAM(dev_ip, dev_port, device_name=dev_name)
+            for dev_name, dev_ip, dev_port in ESP_DEVICES
         ]
         for esp_cam in esp_cams:
             try:

@@ -127,7 +127,7 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
                     logging.debug(f'[loop] ESP Device {esp_cam.device_name} captured image -> {nd_array.shape}')
                     captured_images.append((esp_cam.device_name, nd_array))
                 except UnidentifiedImageError:
-                    logging.error(f'[loop] Failed interpret image from ESP Device {esp_cam.device_name}')
+                    logging.error(f'[loop] Failed to interpret image from ESP Device {esp_cam.device_name}')
                 except Exception as e:
                     logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam.device_name}: {e}')
 
@@ -166,7 +166,8 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
     # Checks the results and issues notification to the user.
     def _check_and_notify_dection(device_name: str, matches: List[int], match_scores: List[float], frame: numpy.ndarray, last_notified: datetime) -> datetime:
         # Check if HOOOMAN was detected.
-        if 1 in matches:
+        ACCEPTED_MATCHES = [ 1, 17, 18 ]
+        if [i for i in matches if i in ACCEPTED_MATCHES]:
             # Convert image to a blob that can be send in a post request
             # to 4bit.api on the /message endpoint.
             now = datetime.now()

@@ -18,7 +18,7 @@ import image_classification_pb2_grpc
 # DNN model paths.
 MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v3/frozen_inference_graph.pb'
 MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v3/graph.pbtxt'
-from common import IMAGE_HEIGHT, IMAGE_WIDTH
+from common import IMAGE_HEIGHT, IMAGE_WIDTH, LABELS_MP
 
 # Server configs.
 PORT=6969
@@ -69,7 +69,8 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
 
         # Label results
         for classId, confidence, box in zip(classes.flatten(), confidences.flatten(), boxes):
-            logging.info(f'Detection score: classId={classId} | confidence={confidence}')
+            className = LABELS_MP[f'{classId}']
+            logging.info(f'Detection score: classId={classId} | className={className} | confidence={confidence}')
             matches.append(classId)
             scores.append(confidence)
             cv2.rectangle(frame, box, color=(0, 255, 0))

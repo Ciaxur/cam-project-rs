@@ -11,17 +11,23 @@ import image_classification_pb2
 from image_classification_pb2_grpc import ImageClassifierStub
 
 # Classification server configuration.
-CLASSIFY_HOST="4bit.local"
-CLASSIFY_PORT=8000
+CLASSIFY_HOST="localhost"
+CLASSIFY_PORT=6969
 
 def main():
-    channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
+    channel = grpc.insecure_channel(
+        f'{CLASSIFY_HOST}:{CLASSIFY_PORT}',
+        options=[
+            ("grpc.max_receive_message_length", 1920*1080*20),
+            ("grpc.max_send_message_length", 1920*1080*20),
+        ]
+    )
     classify_client: ImageClassifierStub = ImageClassifierStub(channel)
 
     def _gen() -> Generator[image_classification_pb2.ClassifyImageRequest, None, None]:
         # Open example image & load as an ndarray.
         frame = cv2.imread('example.jpg')
-        frame = cv2.resize(frame, (300, 300), interpolation=cv2.INTER_NEAREST)
+        # frame = cv2.resize(frame, (300, 300), interpolation=cv2.INTER_NEAREST)
         print('Loaded frame: ', frame)
 
         yield image_classification_pb2.ClassifyImageRequest(

@@ -4,3 +4,4 @@ grpcio-tools
 grpcio
 python-grpc
 ijson
+requests

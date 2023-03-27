@@ -37,6 +37,7 @@ API_PORT = 3000
 MESSAGE_ENDPOINT = '/telegram/message'
 CLIENT_CERT_PATH = 'certs/cam-client1.crt'
 CLIENT_KEY_PATH = 'certs/cam-client1.key'
+TRUSTED_CA_PATH = 'certs/4bitCA.crt'
 
 # Classification configuration.
 from common import IMAGE_HEIGHT, IMAGE_WIDTH
@@ -60,51 +61,35 @@ def streamApiCameras_thread():
             IS_RUNNING: This thread listens on that global variable to stop running.
     """
     global IS_RUNNING
-    endpoint = f'https://{API_HOST}:{API_PORT}/camera/subscribe'
+    endpoint = f'https://{API_HOST}:{API_PORT}/camera/snap'
 
     def helper():
         with requests.get(
             endpoint,
             cert=(CLIENT_CERT_PATH, CLIENT_KEY_PATH),
-            verify=False,
-            headers={"Connection": "keep-alive"},
-            stream=True,
+            verify=TRUSTED_CA_PATH,
+            json={},
         ) as response:
             if response.status_code == 200:
-                buffer = b""
-                for line in response:
-                    if not IS_RUNNING:
-                        return
-                    if line:
-                        buffer += line
+                obj = response.json()
+                # Store the current state.
+                global API_CAMERA_MAP
+                API_CAMERA_MAP = obj['cameras']
 
-                    try:
-                        # Verify parser works.
-                        for _, _, _ in ijson.parse(buffer, multiple_values=True):
-                            continue
-
-                        # Parse & clear buffer.
-                        obj = json.loads(buffer)
-                        buffer = b''
-
-                        # Store the current state.
-                        global API_CAMERA_MAP
-                        API_CAMERA_MAP = obj['cameras']
-                    except ijson.common.IncompleteJSONError:
-                        # Json not complete yet. Let's not spam the terminal.
-                        continue
             else:
                 raise Exception(f"API Endpoint connection failed with status code {response.status_code}")
 
 
     while IS_RUNNING:
+        # Set a timeout.
+        time.sleep(1)
+
         try:
             helper()
         except Exception as e:
             logging.warning(f'API Streaming connection failed (retrying): {e}')
+            time.sleep(5)
 
-            # Set a timeout.
-            time.sleep(2)
 
 def clean_up(video: cv2.VideoCapture) -> None:
     """

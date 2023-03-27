@@ -3,3 +3,4 @@ pillow
 grpcio-tools
 grpcio
 python-grpc
+ijson

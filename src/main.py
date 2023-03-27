@@ -2,17 +2,20 @@
 import argparse
 import base64
 import http.client
+import ijson
 import json
 import logging
 import pickle
+import requests
 import signal
 import ssl
+import threading
 import traceback
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from time import sleep
-from typing import Generator, List, Tuple, Dict
+from typing import Dict, Generator, List, Tuple
 
 import cv2
 import grpc
@@ -21,7 +24,6 @@ from PIL import Image, UnidentifiedImageError
 
 import image_classification_pb2
 from image_classification_pb2_grpc import ImageClassifierStub
-from VideoDevice import ESP32_CAM
 
 # Classification server configuration.
 CLASSIFY_HOST="localhost"
@@ -34,22 +36,73 @@ API_PORT = 3000
 MESSAGE_ENDPOINT = '/telegram/message'
 CLIENT_CERT_PATH = 'certs/cam-client1.crt'
 CLIENT_KEY_PATH = 'certs/cam-client1.key'
+TRUSTED_CA_PATH = 'certs/4bitCA.key'
 
 # Classification configuration.
-from common import (
-    IMAGE_HEIGHT, IMAGE_WIDTH
-)
-IS_RUNNING = True
+from common import IMAGE_HEIGHT, IMAGE_WIDTH
 
-# Array of tuples containing IP and port to poll from ESP devices.
-# Device name is optional. Default it to empty string.
-ESP_DEVICES = [
-    ("door_cam0", "192.168.0.13", 3000)
-]
+IS_RUNNING = True
 VIDEO0_DEVICE_NAME = "video0"
 
+# Map of type:
+# [cam_ip: string]: {
+#   "name": string,  # Name of the device.
+#   "data": bytes,   # Current device image stored as base64.
+# }
+API_CAMERA_MAP = {}
 
-def clean_up(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> None:
+def streamApiCameras_thread():
+    """
+        Intended to run in a thread, which subscribes to the API streaming entpoint
+        consuming live data from all cameras to be consumed and classified.
+
+        Requirements:
+            IS_RUNNING: This thread listens on that global variable to stop running.
+    """
+    global IS_RUNNING
+    endpoint = f'https://{API_HOST}:{API_PORT}/camera/subscribe'
+
+    def helper():
+        with requests.get(
+            endpoint,
+            cert=(CLIENT_CERT_PATH, CLIENT_KEY_PATH),
+            verify=TRUSTED_CA_PATH,
+            headers={"Connection": "keep-alive"},
+            stream=True,
+        ) as response:
+            if response.status_code == 200:
+                buffer = b""
+                for line in response:
+                    if not IS_RUNNING:
+                        return
+                    if line:
+                        buffer += line
+
+                    try:
+                        # Verify parser works.
+                        for _, _, _ in ijson.parse(buffer, multiple_values=True):
+                            continue
+
+                        # Parse & clear buffer.
+                        obj = json.loads(buffer)
+                        buffer = b''
+
+                        # Store the current state.
+                        global API_CAMERA_MAP
+                        API_CAMERA_MAP = obj['cameras']
+                    except ijson.common.IncompleteJSONError:
+                        print('Json not complete yet')
+            else:
+                raise Exception(f"API Endpoint connection failed with status code {response.status_code}")
+
+
+    while IS_RUNNING:
+        try:
+            helper()
+        except Exception as e:
+            logging.warning(f'API Streaming connection failed (retrying): {e}')
+
+def clean_up(video: cv2.VideoCapture) -> None:
     """
     Takes care of cleaning up the VideoCapture instance and releasing any
     memory held by OpenCV
@@ -60,10 +113,6 @@ def clean_up(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> None:
     IS_RUNNING = False
     video.release()
     cv2.destroyAllWindows()
-
-    for esp_cam in esp_cams:
-        logging.info(f'Stopping ESP Camera {esp_cam._device_ip}')
-        esp_cam.stop()
 
 def send_message(body: str, b64_image: bytes) -> None:
     request_headers = {
@@ -91,13 +140,12 @@ def send_message(body: str, b64_image: bytes) -> None:
         resp.reason,
     ))
 
-def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Generator[image_classification_pb2.ClassifyImageRequest, None, None]:
+def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb2.ClassifyImageRequest, None, None]:
     """
         Capture images from the variuos video input devices, generating gRPC request stream messages.
 
         Args:
             video: VideoCapture instance to real camera hardware.
-            esp_cams: List of known ESP32 cameras to query image from.
 
         Returns:
             Image classify request streams.
@@ -112,24 +160,29 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
     else:
         captured_images.append((VIDEO0_DEVICE_NAME, frame))
 
-    # Query frame from ESP32 devices.
-    for esp_cam in esp_cams:
-        # Grab
-        if esp_cam.is_running():
-            img = esp_cam.get_image(blocking=False)
-            esp_cam.clear_images()
-            if img:
-                # Convert requested image to an ndarray (numpy) of which the DNN can understand.
-                try:
-                    _img = Image.open(BytesIO(img))
-                    _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
-                    nd_array = numpy.asarray(_img)
-                    logging.debug(f'[loop] ESP Device {esp_cam.device_name} captured image -> {nd_array.shape}')
-                    captured_images.append((esp_cam.device_name, nd_array))
-                except UnidentifiedImageError:
-                    logging.error(f'[loop] Failed to interpret image from ESP Device {esp_cam.device_name}')
-                except Exception as e:
-                    logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {esp_cam.device_name}: {e}')
+    # Query frame from connected devices.
+    # Shallow copy to prevent thread ownership issues.
+    api_cam_mp = API_CAMERA_MAP.copy()
+    for camera_ip in api_cam_mp:
+        cam = api_cam_mp[camera_ip]
+        device_name = f"{cam['name']}:{camera_ip}"
+
+        # Extract current camera's image.
+        try:
+            img_b64 = cam['data']
+            if not img_b64:
+                continue
+
+            img = base64.b64decode(img_b64)
+            _img = Image.open(BytesIO(img))
+            _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
+            nd_array = numpy.asarray(_img)
+            logging.debug(f'[loop] ESP Device {device_name} captured image -> {nd_array.shape}')
+            captured_images.append((device_name, nd_array))
+        except UnidentifiedImageError:
+                logging.error(f'[loop] Failed to interpret image from ESP Device {device_name}')
+        except Exception as e:
+            logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {device_name}: {e}')
 
         # Retry the connection if the device is not running.
         else:
@@ -145,14 +198,13 @@ def capture_images(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]) -> Genera
             device=device_name,
         )
 
-def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int) -> int:
+def start_loop(video: cv2.VideoCapture, cooldown: int) -> int:
     """
     Run loop which starts reading frames from the video and invoke the
     dnn model through a gRPC server on what's being presented in each frame.
 
     Args:
         video (VideoCapture): OpenCV VideoCapture instance to read frames from.
-        esp_cams (List[ESP32_CAM]): List of ESP32 camera instances to query from.
         cooldown (int): Cooldown in minutes between notifying the user of a
             image detection.
     """
@@ -193,24 +245,23 @@ def start_loop(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM], cooldown: int
     # Track cooldowns based on device name.
     last_notified: Dict[str, datetime] = {
         VIDEO0_DEVICE_NAME: None,
-        **{ f'{dev.device_name}': None for dev in esp_cams },
     }
-    logging.info("Constructed cooldown map:")
-    for key, val in last_notified.items():
-        logging.info(f"- {key}: {val}")
-
 
     classify_client = _setup_grpc_client()
     global IS_RUNNING
     while IS_RUNNING:
         # Lets detect captured images.
         try:
-            for classfied_image in classify_client.ClassifyImage(capture_images(video, esp_cams)):
+            for classfied_image in classify_client.ClassifyImage(capture_images(video)):
                 # classfied_image.matches
                 logging.debug(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
 
                 # Extract the ndarray frame from the response.
                 frame = pickle.loads(classfied_image.image)
+
+                # Check if device was entered into cooldown map.
+                if classfied_image.device not in last_notified:
+                    last_notified[classfied_image.device] = None
 
                 # Check if matches merit notifying a detection.
                 notified = _check_and_notify_dection(
@@ -251,10 +302,10 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-def signal_safe_exit(video: cv2.VideoCapture, esp_cams: List[ESP32_CAM]):
+def signal_safe_exit(video: cv2.VideoCapture):
     def _sig_helper_func(signal, frame):
         logging.info('[Signal] Interrupt detected: Exiting safely')
-        clean_up(video, esp_cams)
+        clean_up(video)
     return _sig_helper_func
 
 def main():
@@ -275,21 +326,12 @@ def main():
     video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH)
     video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT)
 
-    # Register ESP Cameras.
-    esp_cams = []
-    if not args.skip_esp:
-        esp_cams = [
-            ESP32_CAM(dev_ip, dev_port, device_name=dev_name)
-            for dev_name, dev_ip, dev_port in ESP_DEVICES
-        ]
-        for esp_cam in esp_cams:
-            try:
-                esp_cam.start()
-            except Exception:
-                logging.error(f"[main] Failed to start ESP Cam connection with {esp_cam._device_ip}")
-
     # Register signal handler for safely exiting on interrupt.
-    signal.signal(signal.SIGINT, signal_safe_exit(video_capture, esp_cams))
+    signal.signal(signal.SIGINT, signal_safe_exit(video_capture))
+
+    # Start threads.
+    api_camera_query_thread = threading.Thread(target=streamApiCameras_thread)
+    api_camera_query_thread.start()
 
     # Start the run loop.
     logging.info('[main] Starting detection loop')
@@ -297,7 +339,6 @@ def main():
     try:
         loop_status = start_loop(
             video_capture,
-            esp_cams,
             args.cooldown,
         )
         logging.info(f'[main] Run loop status returned {loop_status}')
@@ -305,7 +346,11 @@ def main():
         logging.error(f'[main] Unexpected exception: {e}')
         traceback.print_exception(type(e), e, e.__traceback__)
     finally:
-        clean_up(video_capture, esp_cams)
+        clean_up(video_capture)
+
+        # Wait for threads to stop.
+        api_camera_query_thread.join()
+
     return loop_status
 
 if __name__ == '__main__':

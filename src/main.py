@@ -91,7 +91,8 @@ def streamApiCameras_thread():
                         global API_CAMERA_MAP
                         API_CAMERA_MAP = obj['cameras']
                     except ijson.common.IncompleteJSONError:
-                        print('Json not complete yet')
+                        # Json not complete yet. Let's not spam the terminal.
+                        continue
             else:
                 raise Exception(f"API Endpoint connection failed with status code {response.status_code}")
 
@@ -168,11 +169,13 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
     api_cam_mp = API_CAMERA_MAP.copy()
     for camera_ip in api_cam_mp:
         cam = api_cam_mp[camera_ip]
-        device_name = f"{cam['name']}:{camera_ip}"
+        cam_name = cam['name']
+        cam_data = cam['data']
+        device_name = f"{cam_name}:{camera_ip}"
 
         # Extract current camera's image.
         try:
-            img_b64 = cam['data']
+            img_b64 = cam_data
             if not img_b64:
                 continue
 
@@ -187,12 +190,6 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
         except Exception as e:
             logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {device_name}: {e}')
 
-        # Retry the connection if the device is not running.
-        else:
-            try:
-                esp_cam.start()
-            except Exception:
-                logging.error(f'[loop] Failed to start ESP Cam connection with {esp_cam._device_ip}')
 
     # Create a generator for the captured images.
     for device_name, frame in captured_images:

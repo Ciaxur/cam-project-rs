@@ -10,6 +10,7 @@ import requests
 import signal
 import ssl
 import threading
+import time
 import traceback
 from datetime import datetime
 from io import BytesIO
@@ -36,7 +37,6 @@ API_PORT = 3000
 MESSAGE_ENDPOINT = '/telegram/message'
 CLIENT_CERT_PATH = 'certs/cam-client1.crt'
 CLIENT_KEY_PATH = 'certs/cam-client1.key'
-TRUSTED_CA_PATH = 'certs/4bitCA.key'
 
 # Classification configuration.
 from common import IMAGE_HEIGHT, IMAGE_WIDTH
@@ -66,7 +66,7 @@ def streamApiCameras_thread():
         with requests.get(
             endpoint,
             cert=(CLIENT_CERT_PATH, CLIENT_KEY_PATH),
-            verify=TRUSTED_CA_PATH,
+            verify=False,
             headers={"Connection": "keep-alive"},
             stream=True,
         ) as response:
@@ -101,6 +101,9 @@ def streamApiCameras_thread():
             helper()
         except Exception as e:
             logging.warning(f'API Streaming connection failed (retrying): {e}')
+
+            # Set a timeout.
+            time.sleep(2)
 
 def clean_up(video: cv2.VideoCapture) -> None:
     """

@@ -2,9 +2,9 @@
 import argparse
 import base64
 import http.client
-import ijson
 import json
 import logging
+import math
 import pickle
 import requests
 import signal
@@ -52,6 +52,20 @@ VIDEO0_DEVICE_NAME = "video0"
 # }
 API_CAMERA_MAP = {}
 
+# Map of type:
+# [cam_ip: string]: {
+#   "CropFrameHeight": float,
+#   "CropFrameWidth": float,
+#   "CropFrameX": int,
+#   "CropFrameY": int,
+# }
+API_CAMERA_ADJUSTMENTS_MAP = {}
+
+# Cooldown period for quering connected cameras. This is used for getting the current
+# state of all connected cameras without data going stale. The cooldown period is for
+# periodic state queries.
+API_CAMERA_COOLDOWN = 60 * 20 # Every 20min.
+
 def streamApiCameras_thread():
     """
         Intended to run in a thread, which subscribes to the API streaming entpoint
@@ -61,11 +75,16 @@ def streamApiCameras_thread():
             IS_RUNNING: This thread listens on that global variable to stop running.
     """
     global IS_RUNNING
-    endpoint = f'https://{API_HOST}:{API_PORT}/camera/snap'
+    snap_endpoint = f'https://{API_HOST}:{API_PORT}/camera/snap'
+    list_endpoint = f'https://{API_HOST}:{API_PORT}/camera/list'
 
-    def helper():
+    def snap_helper():
+        """
+            Helper function for invoking the /snap endpoint to gather images of connected
+            cameras.
+        """
         with requests.get(
-            endpoint,
+            snap_endpoint,
             cert=(CLIENT_CERT_PATH, CLIENT_KEY_PATH),
             verify=TRUSTED_CA_PATH,
             json={},
@@ -79,17 +98,56 @@ def streamApiCameras_thread():
             else:
                 raise Exception(f"API Endpoint connection failed with status code {response.status_code}")
 
+    def list_helper():
+        """
+            Helper function for getting the list of connected cameras.
+        """
+        logging.info(f'Querying the state of connected cameras')
+
+        with requests.get(
+            list_endpoint,
+            cert=(CLIENT_CERT_PATH, CLIENT_KEY_PATH),
+            verify=TRUSTED_CA_PATH,
+            json={},
+        ) as response:
+            if response.status_code == 200:
+                obj = response.json()
+                # Store the current state.
+                global API_CAMERA_ADJUSTMENTS_MAP
+
+                for cam in obj['Cameras']:
+                    cam_ip = cam['IP']
+                    cam_adjustments = cam['Adjustment']
+                    API_CAMERA_ADJUSTMENTS_MAP[cam_ip] = cam_adjustments
+                logging.debug(f'Camera list query result: {API_CAMERA_ADJUSTMENTS_MAP}')
+
+            else:
+                raise Exception(f"API Endpoint connection failed with status code {response.status_code}")
+
+
+    # Track the cooldown query based on upcoming query time.
+    next_query_time = 0
 
     while IS_RUNNING:
         # Set a timeout.
         time.sleep(1)
 
+        # Grab snaps of all connected cameras.
         try:
-            helper()
+            snap_helper()
         except Exception as e:
-            logging.warning(f'API Streaming connection failed (retrying): {e}')
+            logging.exception(f'API Streaming connection failed (retrying): ', exc_info=e)
             time.sleep(5)
 
+        # Query the state of connected cameras.
+        if next_query_time <= time.time():
+            try:
+                list_helper()
+                # Calculate the next query time.
+                next_query_time = time.time() + API_CAMERA_COOLDOWN
+            except Exception as e:
+                logging.exception(f'API List endpoint failed: ', exc_info=e)
+                time.sleep(5)
 
 def clean_up(video: cv2.VideoCapture) -> None:
     """
@@ -129,6 +187,40 @@ def send_message(body: str, b64_image: bytes) -> None:
         resp.reason,
     ))
 
+def apply_image_adjustments(image: Image, cam_ip: str) -> numpy.ndarray:
+    """
+        Adjusts a given image with respect to the stored camera adjustments.
+
+        Args:
+            image: The image instance to adjust.
+            cam_ip: The camera's IP used as a key to lookup corresponding adjustments for.
+
+        Return:
+            Adjusted image as a numpy array.
+    """
+    # Convert the image to a numpy array.
+    image_np = numpy.asarray(image)
+
+    if cam_ip in API_CAMERA_ADJUSTMENTS_MAP:
+        cam_adjustments = API_CAMERA_ADJUSTMENTS_MAP[cam_ip]
+        image_frame_crop_height = cam_adjustments['CropFrameHeight']
+        image_frame_crop_width = cam_adjustments['CropFrameWidth']
+        image_frame_crop_x = cam_adjustments['CropFrameX']
+        image_frame_crop_y = cam_adjustments['CropFrameY']
+
+        # Crop the image
+        h, w = image_np.shape[:2]
+        h_ajustment = math.floor(h * image_frame_crop_height)
+        w_ajustment = math.floor(w * image_frame_crop_width)
+        x, y = image_frame_crop_x, image_frame_crop_y
+
+        logging.debug(f'Applying frame crop H={h_ajustment} H={w_ajustment} on x={x}, y={y}')
+        new_h = h - h_ajustment
+        new_w = w - w_ajustment
+        image_np = image_np[y:y+new_h, x:x+new_w]
+
+    return image_np
+
 def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb2.ClassifyImageRequest, None, None]:
     """
         Capture images from the variuos video input devices, generating gRPC request stream messages.
@@ -166,14 +258,13 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
 
             img = base64.b64decode(img_b64)
             _img = Image.open(BytesIO(img))
-            _img = _img.resize((IMAGE_WIDTH, IMAGE_HEIGHT))
-            nd_array = numpy.asarray(_img)
+            nd_array = apply_image_adjustments(_img, camera_ip)
             logging.debug(f'[loop] ESP Device {device_name} captured image -> {nd_array.shape}')
             captured_images.append((device_name, nd_array))
         except UnidentifiedImageError:
                 logging.error(f'[loop] Failed to interpret image from ESP Device {device_name}')
         except Exception as e:
-            logging.error(f'[loop] Unknown exception while interpreting image from ESP Device {device_name}: {e}')
+            logging.warning(f'[loop] Unknown exception while interpreting image from ESP Device {device_name}: {e}')
 
 
     # Create a generator for the captured images.
@@ -279,11 +370,16 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help='Cooldown in minutes between notifying the user of detected image.'
     )
-
     parser.add_argument(
         '--skip-esp',
         action='store_true',
         help='Skips setting up ESP cameras.'
+    )
+    parser.add_argument(
+        '--log_level',
+        type=str,
+        default='INFO',
+        help='Sets the log verbosity',
     )
     return parser.parse_args()
 
@@ -296,6 +392,8 @@ def signal_safe_exit(video: cv2.VideoCapture):
 def main():
     # Parse those args!
     args = parse_args()
+
+    logging.basicConfig(level=getattr(logging, args.log_level, logging.INFO))
 
     # Open and check that we can read from the video camera.
     video_file = f"/dev/{VIDEO0_DEVICE_NAME}"
@@ -339,6 +437,5 @@ def main():
     return loop_status
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     ret = main()
     exit(ret)

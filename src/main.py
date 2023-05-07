@@ -208,15 +208,6 @@ def apply_image_adjustments(image: Image, cam_ip: str) -> numpy.ndarray:
         image_frame_crop_x = cam_adjustments['CropFrameX']
         image_frame_crop_y = cam_adjustments['CropFrameY']
 
-        # HACK: Resize the image if there no adjustments.
-        # TODO: Figure out why images that are too large don't get transmitted...
-        if image_frame_crop_height == 0 and image_frame_crop_width == 0:
-            logging.debug(f"HACK: Image too large, resizing image for {cam_ip}.")
-            image_np = numpy.asarray(
-                image.resize((IMAGE_WIDTH, IMAGE_HEIGHT)),
-            )
-            return image_np
-
         # Crop the image
         h, w = image_np.shape[:2]
         h_ajustment = math.floor(h * image_frame_crop_height)
@@ -278,7 +269,7 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
 
     # Create a generator for the captured images.
     for device_name, captured_frame in captured_images:
-        logging.debug(f'[loop] Classifying device: "{device_name}" Frame: {captured_frame.shape}')
+        logging.info(f'[loop] Classifying device: "{device_name}" Frame: {captured_frame.shape}')
         yield image_classification_pb2.ClassifyImageRequest(
             image=pickle.dumps(captured_frame),
             device=device_name,
@@ -346,7 +337,7 @@ def start_loop(video: cv2.VideoCapture, cooldown: int) -> int:
         try:
             for classfied_image in classify_client.ClassifyImage(capture_images(video)):
                 # classfied_image.matches
-                logging.debug(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
+                logging.info(f'[loop] Match results from {classfied_image.device} = {classfied_image.matches}')
 
                 # Extract the ndarray frame from the response.
                 frame = pickle.loads(classfied_image.image)

@@ -68,7 +68,7 @@ API_CAMERA_COOLDOWN = 60 * 20 # Every 20min.
 
 def streamApiCameras_thread():
     """
-        Intended to run in a thread, which subscribes to the API streaming entpoint
+        Intended to run in a thread, which subscribes to the API streaming endpoint
         consuming live data from all cameras to be consumed and classified.
 
         Requirements:
@@ -208,6 +208,15 @@ def apply_image_adjustments(image: Image, cam_ip: str) -> numpy.ndarray:
         image_frame_crop_x = cam_adjustments['CropFrameX']
         image_frame_crop_y = cam_adjustments['CropFrameY']
 
+        # HACK: Resize the image if there no adjustments.
+        # TODO: Figure out why images that are too large don't get transmitted...
+        if image_frame_crop_height == 0 and image_frame_crop_width == 0:
+            logging.debug(f"HACK: Image too large, resizing image for {cam_ip}.")
+            image_np = numpy.asarray(
+                image.resize((IMAGE_WIDTH, IMAGE_HEIGHT)),
+            )
+            return image_np
+
         # Crop the image
         h, w = image_np.shape[:2]
         h_ajustment = math.floor(h * image_frame_crop_height)
@@ -235,11 +244,11 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
     captured_images: List[Tuple[str, numpy.ndarray]] = []
 
     # Capture frame from the connected video device.
-    ret, frame = video.read()
+    ret, captured_frame = video.read()
     if ret != True:
         logging.error('[loop] ERROR: Run loop failed to read video frame')
     else:
-        captured_images.append((VIDEO0_DEVICE_NAME, frame))
+        captured_images.append((VIDEO0_DEVICE_NAME, captured_frame))
 
     # Query frame from connected devices.
     # Shallow copy to prevent thread ownership issues.
@@ -268,9 +277,10 @@ def capture_images(video: cv2.VideoCapture) -> Generator[image_classification_pb
 
 
     # Create a generator for the captured images.
-    for device_name, frame in captured_images:
+    for device_name, captured_frame in captured_images:
+        logging.debug(f'[loop] Classifying device: "{device_name}" Frame: {captured_frame.shape}')
         yield image_classification_pb2.ClassifyImageRequest(
-            image=pickle.dumps(frame),
+            image=pickle.dumps(captured_frame),
             device=device_name,
         )
 
@@ -287,7 +297,13 @@ def start_loop(video: cv2.VideoCapture, cooldown: int) -> int:
     # Setup gRPC client with the classification server.
     # A helper function in which can be invoked to re-establish the channel upon a disconnect.
     def _setup_grpc_client() -> ImageClassifierStub:
-        channel = grpc.insecure_channel(f'{CLASSIFY_HOST}:{CLASSIFY_PORT}')
+        channel = grpc.insecure_channel(
+            f'{CLASSIFY_HOST}:{CLASSIFY_PORT}',
+            options=[
+                ("grpc.max_receive_message_length", IMAGE_WIDTH*IMAGE_HEIGHT*20),
+                ("grpc.max_send_message_length", IMAGE_WIDTH*IMAGE_HEIGHT*20),
+            ],
+        )
         classify_client: ImageClassifierStub = ImageClassifierStub(channel)
         return classify_client
 

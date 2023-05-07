@@ -90,6 +90,8 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             - List of matches and the corresponding image with an outline around the matches.
         """
         for request in request_iterator:
+            logging.debug(f'Recieved request for {request.device}. Classifying...')
+
             # Extract the image into an ndarray which the model would understand.
             frame = pickle.loads(request.image)
 

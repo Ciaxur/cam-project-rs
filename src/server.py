@@ -26,7 +26,7 @@ MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v3/graph.pbtxt'
 from common import IMAGE_HEIGHT, IMAGE_WIDTH, LABELS_MP
 
 # Server configs.
-PORT=6969
+DEFAULT_PORT=6969
 IMAGE_WRITER_TIMEOUT = 2
 
 
@@ -210,6 +210,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help='Path to a directory in which to store images to'
     )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=DEFAULT_PORT,
+        help='Server port to listen on'
+    )
     return parser.parse_args()
 
 def main():
@@ -229,8 +235,8 @@ def main():
         threshold=args.threshold,
         image_store_dir=args.image_store_dir,
     ), server)
-    server.add_insecure_port(f'[::]:{PORT}')
-    logging.info(f'Starting server on :{PORT}')
+    server.add_insecure_port(f'[::]:{args.port}')
+    logging.info(f'Starting server on :{args.port}')
     server.start()
     server.wait_for_termination()
 

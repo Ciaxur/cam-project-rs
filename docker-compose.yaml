@@ -1,0 +1,15 @@
+version: '3.9'
+services:
+  image_classifier:
+    image: image-classifier-opencv-py3
+    build: .
+    container_name: image_classifier_grpc
+    ports:
+      - 6969:6969
+    volumes:
+      - .:/app
+    entrypoint:
+      - python3
+      - src/server.py
+      - "--threshold=0.7"
+    restart: unless-stopped

@@ -8,6 +8,7 @@ import pickle
 import queue
 import signal
 from concurrent import futures
+from dataclasses import dataclass
 from datetime import datetime
 from threading import Thread
 from typing import List, Optional, Tuple
@@ -28,10 +29,6 @@ from common import IMAGE_HEIGHT, IMAGE_WIDTH, LABELS_MP
 PORT=6969
 IMAGE_WRITER_TIMEOUT = 2
 
-# Configure logging.
-logging.basicConfig(level=logging.INFO)
-
-from dataclasses import dataclass
 
 
 @dataclass
@@ -195,6 +192,12 @@ def range_limited_float_type(min: float, max: float):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start detecting those HOOMANS")
     parser.add_argument(
+        '--loglevel',
+        type=str,
+        default='INFO',
+        help='Logging level'
+    )
+    parser.add_argument(
         '--threshold',
         '-t',
         type=range_limited_float_type(0.0, 1.0),
@@ -212,6 +215,9 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
 
+    # Configure logging.
+    logging.basicConfig(level=getattr(logging, args.loglevel))
+
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=4),
         options=[
@@ -224,7 +230,7 @@ def main():
         image_store_dir=args.image_store_dir,
     ), server)
     server.add_insecure_port(f'[::]:{PORT}')
-    print(f'Starting server on :{PORT}')
+    logging.info(f'Starting server on :{PORT}')
     server.start()
     server.wait_for_termination()
 

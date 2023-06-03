@@ -32,12 +32,12 @@ CLASSIFY_PORT=8000
 
 # Relative path to the model and configs, from which the script was invoked.
 IMAGE_STORAGE_PATH = '/mnt/apt_cam_captures'
-API_HOST = 'localhost'
+API_HOST = '4bit.local'
 API_PORT = 3000
 MESSAGE_ENDPOINT = '/telegram/message'
-CLIENT_CERT_PATH = 'certs/cam-client1.crt'
-CLIENT_KEY_PATH = 'certs/cam-client1.key'
-TRUSTED_CA_PATH = 'certs/4bitCA.crt'
+CLIENT_CERT_PATH = 'certs/video0.crt'
+CLIENT_KEY_PATH = 'certs/video0.key'
+TRUSTED_CA_PATH = 'certs/4bit_server_chain.crt'
 
 # Classification configuration.
 from common import IMAGE_HEIGHT, IMAGE_WIDTH

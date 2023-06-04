@@ -4,6 +4,7 @@
 # which contins a HOOMAN.
 import argparse
 import logging
+import os
 import pickle
 import queue
 import signal
@@ -87,7 +88,13 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
 
             now = datetime.now()
             filename = f'{now}-{image.name}.jpg'
-            cv2.imwrite(f'{self.image_store_dir}/{filename}', image.image)
+
+            # Create a sub-directory to organize image captures by date.
+            image_subdir = datetime.now().strftime("%d-%m-%Y")
+            image_dir = f'{self.image_store_dir}/{image_subdir}'
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+            cv2.imwrite(f'{image_dir}/{filename}', image.image)
         logging.info('Shutting down image writer thread')
 
     @staticmethod

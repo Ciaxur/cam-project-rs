@@ -5,8 +5,8 @@ import http.client
 import json
 import logging
 import math
+import os
 import pickle
-import requests
 import signal
 import ssl
 import threading
@@ -21,6 +21,7 @@ from typing import Dict, Generator, List, Tuple
 import cv2
 import grpc
 import numpy
+import requests
 from PIL import Image, UnidentifiedImageError
 
 import image_classification_pb2
@@ -303,10 +304,16 @@ def start_loop(video: cv2.VideoCapture, cooldown: int) -> int:
         # Check if HOOOMAN was detected.
         ACCEPTED_MATCHES = [ 1, 17, 18 ]
         if [i for i in matches if i in ACCEPTED_MATCHES]:
+            # Create a sub-directory to organize image captures by date.
+            image_subdir = datetime.now().strftime("%d-%m-%Y")
+            image_dir = f'{IMAGE_STORAGE_PATH}/{image_subdir}'
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+
             # Convert image to a blob that can be send in a post request
             # to 4bit.api on the /message endpoint.
             now = datetime.now()
-            img_path = Path(IMAGE_STORAGE_PATH, 'hooman-{}-{}.jpg'.format(str(now), device_name))
+            img_path = Path(image_dir, 'hooman-{}-{}.jpg'.format(str(now), device_name))
             cv2.imwrite(str(img_path), frame)
             raw_image = cv2.imencode('.jpg', frame)[1]
             logging.info(f'[loop] Hooman detected by {device_name}! Saving to {img_path}')

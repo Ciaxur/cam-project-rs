@@ -4,3 +4,7 @@ opencv-venv
 *_pb2*.py
 certs
 .vscode
+config.json
+
+# Added by cargo
+/target

@@ -1,8 +1,10 @@
+from collections import defaultdict
+
 # Expected image.
 IMAGE_WIDTH = 300
 IMAGE_HEIGHT = 300
 
-LABELS_MP = {
+LABELS_MP = defaultdict(lambda: f"UNKNOWN", {
   '1': 'person',
   '2': 'bicycle',
   '3': 'car',
@@ -83,4 +85,4 @@ LABELS_MP = {
   '88': 'teddy bear',
   '89': 'hair drier',
   '90': 'toothbrush',
-}
+})

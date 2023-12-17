@@ -1,0 +1,24 @@
+{
+  "cooldown_s": 20,
+  "video_fd": "/dev/video0",
+  "camera_properties": {
+    "image_width": 300.0,
+    "image_height": 300.0,
+    "video_fps": 5.0
+  },
+  "camera_api": {
+    "endpoint": "4bit.local:3000",
+    "target_fps": 5.0,
+    "telegram_chat_id": 6942069,
+    "trusted_ca_filepath": "./certs/4bit_server_chain.crt",
+    "identity_cert_filepath": "./certs/video0.crt",
+    "identity_key_filepath": "./certs/video0.key"
+  },
+  "grpc_server_endpoint": "http://4bit.local:8000",
+  "image_storage_path": "/mnt/apt_cam_captures",
+  "accepted_match_labels": [
+    1,
+    17,
+    18
+  ]
+}

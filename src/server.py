@@ -11,12 +11,14 @@ import signal
 from concurrent import futures
 from dataclasses import dataclass
 from datetime import datetime
+from io import BytesIO
 from threading import Thread
 from typing import List, Optional, Tuple
 
 import cv2
 import grpc
 import numpy
+from PIL import Image
 
 import image_classification_pb2
 import image_classification_pb2_grpc
@@ -130,42 +132,77 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
 
         return (matches, scores,)
 
+    @staticmethod
+    def parse_image_to_nparray(image: bytes) -> numpy.ndarray:
+        """
+            This funciton consumes the image, returning an ndarray representation of the
+            parsed image.
+
+            Args:
+                image: Bytes image obtained from the classification request.
+
+            Returns:
+                An ndarray representation of the parsed image.
+        """
+        # images within the requests are expected to be raw jpeg images.
+        frame = Image.open(BytesIO(image))
+        img_np = numpy.asarray(frame)
+        logging.info("Converted raw image byte to numpy array -> {}".format(img_np.shape))
+        return img_np
+
+    @staticmethod
+    def convert_numpy_to_jpeg_bytes(image_np: numpy.ndarray) -> bytes:
+        """
+            Helper function which supports converting a given numpy array to jpeg bytes array.
+
+            Args:
+                image_np: Image in a numpy array.
+
+            Returns:
+                Bytes array encoded as a jpeg image.
+        """
+        # Parse the numpy array into a PIL Image, saving that image into an in-memory buffer.
+        buffer = BytesIO()
+        Image.fromarray(image_np).save(buffer, format='jpeg')
+        return buffer.getvalue()
+
     def ClassifyImage(self, request_iterator: image_classification_pb2.ClassifyImageRequest, context):
         """
             Classifies the request image, yielding matches found within the image.
 
             Args:
-            request_iterator: A stream of classification requests.
-            context: gRPC request context.
+                request_iterator: A stream of classification requests.
+                context: gRPC request context.
 
             Returns:
-            - Empty message if there were no matches found.
-            - List of matches and the corresponding image with an outline around the matches.
+                - Empty message if there were no matches found.
+                - List of matches and the corresponding image with an outline around the matches.
         """
         for request in request_iterator:
             logging.debug(f'Recieved request for {request.device}. Classifying...')
 
             # Extract the image into an ndarray which the model would understand.
-            frame: numpy.ndarray = pickle.loads(request.image)
+            frame_np: numpy.ndarray = self.parse_image_to_nparray(request.image)
 
             # Classify the image.
-            matches, scores = self.detect(frame, self.model, self.threshold)
+            matches, scores = self.detect(frame_np, self.model, self.threshold)
             logging.info(f'Image for device={request.device} matched={len(matches)}')
 
-            # Encode the new frame with a potentially outlined match(es).
-            encoded_frame = pickle.dumps(frame)
+            # Encode the new frame as an encoded image byte array.
+            logging.info(f"Serializing classified image for {request.device} as an image byte array")
+            serlialized_frame: bytes = self.convert_numpy_to_jpeg_bytes(frame_np)
 
             # Offload storing the classified image to a thread, if one's active.
             if self.image_store_active:
                 self.image_store_queue.put(ClassifiedImage(
-                    image=frame,
+                    image=frame_np,
                     name=request.device,
                 ))
 
             # Return result.
             yield image_classification_pb2.ClassifyImageResponse(
                 matches=list(matches),
-                image=encoded_frame,
+                image=serlialized_frame,
                 device=request.device,
                 match_scores=list(scores),
             )

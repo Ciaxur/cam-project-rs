@@ -1,0 +1,41 @@
+[package]
+name = "apartment-cam"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "aptcam_client"
+path = "src/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.4.8", features = ["derive"] }
+env_logger = "0.10.1"
+log = "0.4.20"
+tokio = { version = "1.34.0", features = ["full"] }
+
+# https://docs.rs/crate/opencv/0.88.1/features
+opencv = { version = "0.88.1", features = ["video", "videoio"] }
+
+# https://docs.rs/reqwest/0.11.22/reqwest/index.html
+reqwest = { version = "0.11.22", features = ["rustls-tls", "json"] }
+rustls = "0.22.0"
+serde_json = "1.0.108"
+serde = { version = "1.0.193", features = ["derive"] }
+base64 = "0.21.5"
+
+# Images
+image = "0.24.7"
+ndarray = "0.15.6"
+libmath = "0.2.1"
+
+# gRPC
+tonic = "0.10.2"
+prost = "0.12.3"
+tokio-stream = "0.1.14"
+chrono = "0.4.31"
+
+
+[build-dependencies]
+tonic-build = "0.10.2"

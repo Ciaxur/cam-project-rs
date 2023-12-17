@@ -1,6 +1,16 @@
 # Aparmtment Camera
 TODO: Try out other models and get benchmarks on them.
 
+# Usage
+## Dependencies
+Both client & server require OpenCV.
+- `ArchLinux` -> https://archlinux.org/packages/extra/x86_64/opencv
+
+## Client
+## Server
+TODO: after this project becomes generic
+
+
 # Models
 Additional models can be found here:
 - https://github.com/opencv/opencv/wiki/TensorFlow-Object-Detection-API#use-existing-config-file-for-your-model

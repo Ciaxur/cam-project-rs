@@ -16,9 +16,5 @@
   },
   "grpc_server_endpoint": "http://4bit.local:8000",
   "image_storage_path": "/mnt/apt_cam_captures",
-  "accepted_match_labels": [
-    1,
-    17,
-    18
-  ]
+  "accepted_match_labels": [0]
 }

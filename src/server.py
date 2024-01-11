@@ -5,9 +5,9 @@
 import argparse
 import logging
 import os
-import pickle
 import queue
 import signal
+import time
 from concurrent import futures
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,21 +17,21 @@ from typing import List, Optional, Tuple
 
 import cv2
 import grpc
-import numpy
-from PIL import Image
-
 import image_classification_pb2
 import image_classification_pb2_grpc
+import numpy
+import torch
+from PIL import Image
+from ultralytics import YOLO
+from ultralytics.engine.results import Boxes, Results
 
-# DNN model paths.
-MODEL_WEIGHTS_PATH = 'models/SSD_MobileNet_v3/frozen_inference_graph.pb'
-MODEL_CONFIG_PATH = 'models/SSD_MobileNet_v3/graph.pbtxt'
-from common import IMAGE_HEIGHT, IMAGE_WIDTH, LABELS_MP
+# Common model configs
+from common import IMAGE_HEIGHT, IMAGE_WIDTH, get_random_color
 
 # Server configs.
 DEFAULT_PORT=6969
 IMAGE_WRITER_TIMEOUT = 2
-
+YOLOV8_MODEL_FILEPATH = 'models/yolov8/yolov8n.pt'
 
 
 @dataclass
@@ -40,7 +40,7 @@ class ClassifiedImage:
     name: str
 
 class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierServicer):
-    model: cv2.dnn.Net
+    model: YOLO
     threshold: int
 
     # Image store settings.
@@ -50,15 +50,14 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
     image_store_dir: str
 
     def __init__(self, threshold: int, image_store_dir: Optional[str] = None) -> None:
-        # Load & configure the DNN model.
-        logging.debug(f"Loading model from {MODEL_CONFIG_PATH} | {MODEL_WEIGHTS_PATH}")
-        self.model = cv2.dnn_DetectionModel(MODEL_WEIGHTS_PATH, MODEL_CONFIG_PATH)
-        self.model.setInputSize(IMAGE_WIDTH, IMAGE_HEIGHT)
-        self.model.setInputScale(1.0 / 127.5)
-        self.model.setInputMean((127.5, 127.5, 127.5))
-        self.model.setInputSwapRB(True)
+        # Load in Yolov8.
+        if not os.path.exists(YOLOV8_MODEL_FILEPATH):
+            raise FileExistsError(f'File {YOLOV8_MODEL_FILEPATH} does not exist')
 
+        self.model = YOLO(YOLOV8_MODEL_FILEPATH)
         self.threshold = threshold
+        logging.info(f'Model Device set to -> {self.model.device}')
+
 
         # Spin up a thread to consume images to be stored in a given directory.
         self.image_store_queue = queue.Queue(2048)
@@ -70,7 +69,6 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             self.setup_sigint()
         else:
             self.image_store_active = False
-
 
         super().__init__()
 
@@ -99,38 +97,91 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             cv2.imwrite(f'{image_dir}/{filename}', image.image)
         logging.info('Shutting down image writer thread')
 
-    @staticmethod
-    def detect(frame: numpy.ndarray, model: cv2.dnn_DetectionModel, score_thresh: int) -> Tuple[List[int], List[float]]:
+    def detect(self, np_image: numpy.ndarray) -> Tuple[List[str], List[int], List[float], numpy.array]:
         """
-        NOTE: I think 1 refers to human.
-        Run the DNN model on the frame, detecting objects.
+            Run the image classifier model on the frame, detecting objects.
+            This image classifier does not include a bbox.
 
-        Args:
-            frame: Captured frame to run through dnn.
-            model: The DNN instance.
-            score_thresh: The score's minimum threshold.
-        Returns:
-            A tuple containing a list of match ids and a list of their corresponding confidence scores.
+            Args:
+                np_image: Captured frame to run through the model.
+            Returns:
+                A tuple containing a list of labels, match ids and a list of their corresponding confidence scores
+                and a modified image with bbox.
         """
-        # Apply the image through the DNN.
-        logging.debug("Applying image through the DNN")
-        classes, confidences, boxes = model.detect(frame, confThreshold=score_thresh)
+        # Apply the image through the pipeline
+        img = Image.fromarray(np_image)
+
+        t0 = time.time()
+        with torch.no_grad():
+            # https://docs.ultralytics.com/modes/predict/#inference-arguments
+            results: List[Results] = self.model.predict(img, verbose=False)
+        t1 = time.time()
+        dt = t1 - t0
+        logging.info(f'Model object detection took {dt}s with {len(results)} detections')
+
 
         # Early return on no results.
-        matches = []
+        classes = []
+        labels = []
         scores = []
-        if len(classes) == 0:
-            return (matches, scores,)
+        if len(results) == 0:
+            return (labels, classes, scores, np_image)
 
-        # Label results
-        for classId, confidence, box in zip(classes.flatten(), confidences.flatten(), boxes):
-            className = LABELS_MP[f'{classId}']
-            logging.info(f'Detection score: classId={classId} | className={className} | confidence={confidence}')
-            matches.append(classId)
-            scores.append(confidence)
-            cv2.rectangle(frame, box, color=(0, 255, 0))
+        # Populate prediction info.
+        for result in results:
+            # Draw bbox around the image.
+            np_image: numpy.array = self.draw_bbox(np_image, result.boxes, result)
 
-        return (matches, scores,)
+            # Extract features.
+            for box in result.boxes:
+                class_id = box.cls.item()
+                label = result.names[class_id]
+                score = box.conf.item()
+
+                # Filter classifications based on score.
+                if score < self.threshold:
+                    continue
+
+                logging.info(f"Detected object above {self.threshold} threshold -> label=[{label}] | score={score} | class={class_id}")
+                classes.append(class_id)
+                labels.append(label)
+                scores.append(score)
+
+        return (labels, classes, scores, np_image)
+
+    @staticmethod
+    def draw_bbox(img_np: numpy.array, boxes: Boxes, prediction: Results) -> numpy.array:
+        """
+            Helper function that applies a bounding box and labels onto the given image
+            and result of object detection on that image.
+
+            Args:
+                img: Pillow Image instance.
+                boxes: Resulting boxes instance being drawn on image.
+                prediction: Results instance.
+
+            Returns:
+                Modified Pillow image instance with bbox and labels.
+        """
+        for box in boxes:
+            bbox = box.xyxy[0]
+            class_id = box.cls.item()
+            score = box.conf.item()
+            label = prediction.names[class_id]
+            color = get_random_color()
+
+            # Extract coordinates as ints
+            xmin, ymin = int(bbox[0]), int(bbox[1]),
+            xmax, ymax = int(bbox[2]), int(bbox[3])
+
+            # Draw bounding box
+            cv2.rectangle(img_np, (xmin, ymin), (xmax, ymax), color, 1)
+
+            # Display label and score
+            label_text = f"{label}: {score:.2f}"
+            cv2.putText(img_np, label_text, (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+        return img_np
 
     @staticmethod
     def parse_image_to_nparray(image: bytes) -> numpy.ndarray:
@@ -185,8 +236,8 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             frame_np: numpy.ndarray = self.parse_image_to_nparray(request.image)
 
             # Classify the image.
-            matches, scores = self.detect(frame_np, self.model, self.threshold)
-            logging.info(f'Image for device={request.device} matched={len(matches)}')
+            labels, matches, scores, frame_np = self.detect(frame_np)
+            logging.info(f'Image for device={request.device} matched={len(labels)}')
 
             # Encode the new frame as an encoded image byte array.
             logging.info(f"Serializing classified image for {request.device} as an image byte array")
@@ -201,10 +252,11 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
 
             # Return result.
             yield image_classification_pb2.ClassifyImageResponse(
+                labels=labels,
                 matches=list(matches),
+                match_scores=list(scores),
                 image=serlialized_frame,
                 device=request.device,
-                match_scores=list(scores),
             )
 
     def setup_sigint(self):
@@ -219,7 +271,6 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             self.image_store_active = False
             self.image_store_t.join()
         exit(0)
-
 
 def range_limited_float_type(min: float, max: float):
     """ Type function for argparse - a float within some predefined bounds """

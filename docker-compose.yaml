@@ -9,7 +9,5 @@ services:
     volumes:
       - .:/app
     entrypoint:
-      - python3
-      - src/server.py
-      - "--threshold=0.7"
+      - ./scripts/start_server.sh
     restart: unless-stopped

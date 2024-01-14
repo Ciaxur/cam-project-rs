@@ -1,0 +1,9 @@
+[submodule "models/mobilenetv3_large_100.ra_in1k"]
+	path = models/mobilenetv3_large_100.ra_in1k
+	url = https://huggingface.co/timm/mobilenetv3_large_100.ra_in1k
+[submodule "models/resnet-50"]
+	path = models/resnet-50
+	url = https://huggingface.co/microsoft/resnet-50
+[submodule "models/yolos-tiny"]
+	path = models/yolos-tiny
+	url = https://huggingface.co/hustvl/yolos-tiny

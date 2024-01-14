@@ -43,8 +43,11 @@ images within an open stream.
 $ python -m venv opencv-venv
 $ source ./opencv-venv/bin/activate
 
-# Install modules
-$ python -m pip install -r ./requirements.txt
+# Install modules. Including intel extension url for dg2 GPU support.
+$ python \
+  -m pip install \
+  -r ./requirements.txt \
+  --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
 
 # Run the server
 $ python ./src/server.py \

@@ -44,7 +44,7 @@ $ python -m venv opencv-venv
 $ source ./opencv-venv/bin/activate
 
 # Install modules
-$ python -m pip install ./requirements.txt
+$ python -m pip install -r ./requirements.txt
 
 # Run the server
 $ python ./src/server.py \

@@ -16,7 +16,7 @@ log = "0.4.20"
 tokio = { version = "1.34.0", features = ["full"] }
 
 # https://docs.rs/crate/opencv/0.88.1/features
-opencv = { version = "0.88.1", features = ["video", "videoio"] }
+opencv = { version = "0.88.8", features = ["video", "videoio"] }
 
 # https://docs.rs/reqwest/0.11.22/reqwest/index.html
 reqwest = { version = "0.11.22", features = ["rustls-tls", "json"] }

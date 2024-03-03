@@ -1,16 +1,18 @@
 pub mod classifier_grpc;
 pub mod interfaces;
+pub mod ndarray_util;
 pub mod storage_manager;
 use anyhow::{Error, Result};
 use base64::{engine::general_purpose as b64, Engine as _};
-use image::{Rgba, RgbaImage};
 use interfaces::{CameraEntry, CameraListResponse, CameraSnapResponse, CameraStreamResponse};
 use log::{debug, info, warn};
-use ndarray::Array3;
+use ndarray_util::{
+  image_bytes_to_ndarray, ndarray_crop_image, ndarray_rotate_image, ndarray_to_image_bytes,
+};
 use reqwest::{header, Client, Method};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::Sender;
 use tokio::time::{Duration, Instant};
@@ -38,63 +40,6 @@ fn load_certificates(
   let cert_key_pair = reqwest::Identity::from_pem(&id_buff)?;
 
   Ok((cert_key_pair, ca))
-}
-
-/// Helper function which converts a given jpeg image byte array into a
-/// 3D array, which includes RGBA values for each pixel.
-///
-/// Args:
-/// * image_data: JPEG image u8 array.
-///
-/// Returns:
-/// * A converted 3DArray instance.
-fn image_bytes_to_ndarray(image_data: &[u8]) -> Result<(Array3<u8>, RgbaImage)> {
-  // Load the image and then convert to a 3D Array.
-  let image = image::load_from_memory(&image_data)?.to_rgba8();
-  let (width, height) = image.dimensions();
-
-  // Convert to ndarray to manually modify the image.
-  let mut image_ndarray: Array3<u8> = Array3::zeros((height as usize, width as usize, 4));
-  for y in 0..height {
-    for x in 0..width {
-      let pixel: &Rgba<u8> = image.get_pixel(x, y);
-
-      // Set all rgba values for each pixel.
-      image_ndarray[(y as usize, x as usize, 0 as usize)] = pixel[0];
-      image_ndarray[(y as usize, x as usize, 1 as usize)] = pixel[1];
-      image_ndarray[(y as usize, x as usize, 2 as usize)] = pixel[2];
-      image_ndarray[(y as usize, x as usize, 3 as usize)] = pixel[3];
-    }
-  }
-
-  Ok((image_ndarray, image))
-}
-
-/// Helper fucntion which converts a given ndarray back back into an
-/// encoded jpeg image.
-///
-/// Args:
-/// * image_ndarray: 3DArray instance to be converted into a u8 array.
-///
-/// Returns:
-/// * JPEG image u8 array.
-fn ndarray_to_image_bytes(image_ndarray: Array3<u8>) -> Result<Vec<u8>> {
-  let (height, width) = (image_ndarray.shape()[0], image_ndarray.shape()[1]);
-
-  // Consume the ndarray into an image buffer of which we can then encode
-  // into a jpeg image buffer.
-  let mut image_buff = RgbaImage::new(width as u32, height as u32);
-  for (x, y, pixel) in image_buff.enumerate_pixels_mut() {
-    // Set all rgba values back into each pixel.
-    pixel[0] = image_ndarray[(y as usize, x as usize, 0 as usize)];
-    pixel[1] = image_ndarray[(y as usize, x as usize, 1 as usize)];
-    pixel[2] = image_ndarray[(y as usize, x as usize, 2 as usize)];
-    pixel[3] = image_ndarray[(y as usize, x as usize, 3 as usize)];
-  }
-
-  let mut mem_buff = Cursor::new(vec![]);
-  image_buff.write_to(&mut mem_buff, image::ImageFormat::Jpeg)?;
-  Ok(mem_buff.get_ref().to_vec())
 }
 
 /// This contains client credential info used to configure the Camera Client
@@ -425,36 +370,20 @@ impl CameraApi {
           image_ndarray.shape()
         );
 
-        // Grab/calculate adjustments.
-        let height_adjustment =
-          math::round::floor((height as f64) * cam_config.adjustment.crop_frame_height, 3) as u32;
-        let width_adjustment =
-          math::round::floor((width as f64) * cam_config.adjustment.crop_frame_width, 3) as u32;
-        let (crop_x, crop_y) = (
-          cam_config.adjustment.crop_frame_x as usize,
-          cam_config.adjustment.crop_frame_y as usize,
-        );
+        // Crop the image.
+        image_ndarray = ndarray_crop_image(image_ndarray, image_result, &cam_config.adjustment);
 
-        // Finally, apply changes.
-        debug!("Applying frame crop H={height_adjustment} W={width_adjustment} on x={crop_x}, y={crop_y}");
-        let new_height = (height - height_adjustment) as usize;
-        let new_width = (width - width_adjustment) as usize;
+        // Apply image rotation.
+        if cam_config.adjustment.image_rotate != 0.0 {
+          image_ndarray = ndarray_rotate_image(image_ndarray, cam_config.adjustment.image_rotate);
+        }
 
-        let y0 = crop_y as usize;
-        let y1 = (crop_y + new_height) as usize;
-        let x0 = crop_x as usize;
-        let x1 = (crop_x + new_width) as usize;
-
-        // Slice the width and height, retaining the channel indicies.
-        let adjusted_img_ndarray: Array3<u8> = image_ndarray
-          .slice_mut(ndarray::s![y0..y1, x0..x1, ..])
-          .to_owned();
-
+        // Buffer adjusted image.
         adjusted_image_buffers.push(AdjustedCameraBuffer {
           cam_ip: cam_ip.clone(),
           cam_name: cam_elt.name.clone(),
           device_name: format!("{}:{}", cam_elt.name.clone(), cam_ip.clone()),
-          image_buff: ndarray_to_image_bytes(adjusted_img_ndarray)?,
+          image_buff: ndarray_to_image_bytes(image_ndarray)?,
         });
       } else {
         warn!(

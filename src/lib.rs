@@ -1,6 +1,6 @@
-mod api;
-mod camera;
-mod config;
+pub mod api;
+pub mod camera;
+pub mod config;
 
 use anyhow::{Error, Result};
 use api::classifier_grpc::{

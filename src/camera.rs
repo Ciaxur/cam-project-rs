@@ -152,7 +152,7 @@ impl CameraDevice {
     let mut stat_check_time = Instant::now();
 
     // Loop over the video stream.
-    // NOTE: If we sleep within this thread withou constantly calling read,
+    // NOTE: If we sleep within this thread without constantly calling read,
     // io breaks internally causing the read to time out.
     while self.video_capture.read(&mut image_buff)? {
       // Check statistics every second.

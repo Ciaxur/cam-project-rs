@@ -56,6 +56,8 @@ pub struct CameraAdjustment {
   pub crop_frame_x: u64,
   #[serde(rename = "CropFrameY")]
   pub crop_frame_y: u64,
+  #[serde(rename = "Rotate")]
+  pub image_rotate: f64,
 }
 
 /// Telegram Push Message Notification

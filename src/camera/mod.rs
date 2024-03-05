@@ -1,3 +1,4 @@
+mod server;
 use anyhow::{Error, Result};
 use log::{debug, error, info};
 use opencv::core::Vector;

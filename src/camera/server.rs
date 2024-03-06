@@ -5,34 +5,34 @@ use actix_web::{http::header::ContentType, web, App, HttpResponse, HttpServer, R
 use async_stream::stream;
 use log::info;
 use std::convert::Infallible;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct CameraServer {
-  cam_buffer: Arc<RingBuffer<Vec<u8>>>,
+  pub cam_buffer: Arc<RwLock<RingBuffer<Vec<u8>>>>,
+  port: u16,
 }
 
 impl CameraServer {
-  pub fn new() -> Self {
+  pub fn new(rb_capacity: usize, port: u16) -> Self {
     Self {
-      cam_buffer: Arc::new(RingBuffer::new(69)),
+      cam_buffer: Arc::new(RwLock::new(RingBuffer::new(rb_capacity))),
+      port,
     }
   }
 
   /// Starts camera server, which passes in the RingBuffer used
   /// to for responses.
-  ///
-  /// Args:
-  ///   - port: Port to listen on.
-  pub async fn start(&self, port: u16) {
-    info!("Listening on :{port}");
-    let data = web::Data::new(RwLock::new(self.cam_buffer.clone()));
+  pub async fn start(&self) {
+    info!("Listening on :{}", self.port);
+    let data = web::Data::new(self.cam_buffer.clone());
 
     let _ = HttpServer::new(move || {
       App::new()
         .app_data(web::Data::clone(&data))
         .route("/", web::get().to(serve))
     })
-    .bind(("127.0.0.1", port))
+    .bind(("127.0.0.1", self.port))
     .unwrap()
     .run()
     .await;
@@ -41,7 +41,7 @@ impl CameraServer {
 
 async fn serve(data: web::Data<RwLock<RingBuffer<Vec<u8>>>>) -> impl Responder {
   let stream = stream! {
-    let mut data = data.write().unwrap();
+    let mut data = data.write().await;
     loop {
       match data.pop().await {
         Ok(img) => yield Ok::<_, Infallible>(web::Bytes::from(img)),

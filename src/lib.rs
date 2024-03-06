@@ -11,15 +11,16 @@ use api::classifier_grpc::{
 use api::interfaces::{CameraBaseData, CameraStreamResponse};
 use api::storage_manager::{StorageManager, StorageManagerFile};
 use api::{AdjustedCameraBuffer, CameraApi, CameraApiOptions};
+use camera::server::CameraServer;
 use clap::Parser;
 use log::{debug, error, info, warn};
 use opencv::imgcodecs::ImwriteFlags;
 use opencv::prelude::{Mat, MatTraitConst};
-use std::collections::HashMap;
-use tokio::sync::mpsc;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{Duration, Instant};
 
-use crate::config::Config;
+use crate::{config::Config, data_struct::ring_buffer::RingBuffer};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,12 +39,14 @@ pub struct Args {
 /// Args:
 /// * config: Parsed configuration instance.
 /// * produced_images_tx: Sender channel for writing consumed images to.
+/// * TODO: cam_rb
 ///
 /// Returns:
 /// * The video consumption and adjustment task workers.
 async fn start_local_video_ingestor(
   config: &Config,
   produced_images_tx: mpsc::Sender<(CameraStreamResponse, Option<Vec<AdjustedCameraBuffer>>)>,
+  cam_rb: Arc<RwLock<RingBuffer<Vec<u8>>>>,
 ) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
   let video_fd = config.video_fd.clone();
   let video_props = config.camera_properties.clone();
@@ -132,6 +135,14 @@ async fn start_local_video_ingestor(
         })
         .collect();
 
+      // TODO: Update to not yeet into channel but rather into ring buffer that 4bit.api
+      // can consume and THEN we consume in another thread.
+      // Add consumed images into ring buffer.
+      // let cam_rb = cam_rb.
+      let mut cam_rb = cam_rb.write().await;
+      for img in adjusted_camera_buffers.iter() {
+        cam_rb.push(img.image_buff.clone()).await;
+      }
       // Send a defaulted stream response.
       let stream_response = CameraStreamResponse {
         cameras: device_map.clone(),
@@ -379,6 +390,21 @@ async fn start_camera_api_client(
   return (producer_task, consumer_task);
 }
 
+/// WIP:
+async fn start_local_video_server(
+  config: &Config,
+) -> (
+  tokio::task::JoinHandle<()>,
+  Arc<RwLock<RingBuffer<Vec<u8>>>>,
+) {
+  let server = CameraServer::new(128, config.camera_server.port);
+  let cam_rb = server.cam_buffer.clone();
+  (
+    tokio::task::spawn(async move { server.start().await }),
+    cam_rb,
+  )
+}
+
 pub async fn run() -> Result<(), String> {
   // Grab passed in cli args, forwarding them to the main execution logic.
   let args = Args::parse();
@@ -399,6 +425,9 @@ pub async fn run() -> Result<(), String> {
   })
   .expect("Client instantiation failed");
 
+  // Create a local server for streaming local /dev/videoN on.
+  let (local_cam_server_task, local_cam_rb) = start_local_video_server(&config).await;
+
   // Create two channels for which to allow other workers to issue requests
   // to and receive responses from.
   let (classify_request_tx, classify_request_rx) = mpsc::channel::<ClassifyImageRequest>(128);
@@ -412,9 +441,8 @@ pub async fn run() -> Result<(), String> {
 
   // Local /dev/videoN ingestor: Streams images from the local video device
   // into a shared channel for classification.
-  // let video_ingestor_chan_tx = consumed_images_tx.clone();
   let (video0_ingestor_task, video0_image_adjustment_task) =
-    start_local_video_ingestor(&config, consumed_images_tx.clone()).await;
+    start_local_video_ingestor(&config, consumed_images_tx.clone(), local_cam_rb).await;
 
   // Camera API client: Consumes an image stream from the given endpoint, applies image adjustments
   // and writes consumed images to a channel for which to be used for classification.
@@ -443,7 +471,8 @@ pub async fn run() -> Result<(), String> {
     camera_api_consumer_task,
     classifier_client_task,
     video0_ingestor_task,
-    video0_image_adjustment_task
+    video0_image_adjustment_task,
+    local_cam_server_task,
   );
   Ok(())
 }

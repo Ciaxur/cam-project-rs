@@ -27,6 +27,11 @@ pub struct ConfigCameraAPI {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CameraServerConfig {
+  pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
   /// Cooldown period in seconds between notifying the client of an
   /// image classifier match.
@@ -34,6 +39,9 @@ pub struct Config {
 
   /// Video descriptor filepath for which to consume video stream from.
   pub video_fd: String,
+
+  /// Local video server.
+  pub camera_server: CameraServerConfig,
 
   /// Video camera stream properties.
   pub camera_properties: CameraVideoProps,

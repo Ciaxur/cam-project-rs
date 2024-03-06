@@ -33,8 +33,8 @@ impl<T: Clone + Debug> RingBuffer<T> {
   /// Pushes the given value into the RingBuffer.
   ///
   /// Args:
-  ///   - value: Value to add into the RingBuffer.
-  pub async fn push(&mut self, value: T) -> Result<()> {
+  /// * value: Value to add into the RingBuffer.
+  pub async fn push(&mut self, value: T) {
     let mut buffer = self.buffer.write().await;
 
     let next_tail = (self.tail + 1) % self.capacity;
@@ -46,7 +46,6 @@ impl<T: Clone + Debug> RingBuffer<T> {
     }
     self.tail = next_tail;
     self.not_empty.notify_one();
-    Ok(())
   }
 
   /// Returns the head value from the stored RingBuffer instance if
@@ -55,7 +54,7 @@ impl<T: Clone + Debug> RingBuffer<T> {
     let buffer = self.buffer.read().await;
     while self.is_empty() {
       let lock = self.lock.lock().unwrap();
-      self.not_empty.wait(lock);
+      let _ = self.not_empty.wait(lock);
     }
 
     let buffer_idx = self.head;

@@ -1,6 +1,7 @@
 pub mod api;
 pub mod camera;
 pub mod config;
+pub mod data_struct;
 
 use anyhow::{Error, Result};
 use api::classifier_grpc::{

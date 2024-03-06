@@ -1,4 +1,4 @@
-mod server;
+pub mod server;
 use anyhow::{Error, Result};
 use log::{debug, error, info};
 use opencv::core::Vector;
@@ -52,12 +52,12 @@ impl CameraDevice {
   /// Creates a new CameraDevice instance which reads from the given
   /// video device or video filepath.
   ///
-  /// # Arguments
+  /// Args:
   /// * filepath - Filepath to video device or video file.
   /// * video_props - Video properties to configure video stream consumption.
   /// * video_encoding - Video encoding properties to apply on consumed image streams.
   ///
-  /// # Returns
+  /// Returns:
   /// * A CameraDevice instance.
   pub fn new(
     filepath: &str,
@@ -134,7 +134,7 @@ impl CameraDevice {
   /// Starts consuming a stream of images from the current device, encodes the image,
   /// then pushes image results on the given sender channel.
   ///
-  /// # Arguments:
+  /// Args:
   /// * chan_tx - Tokio Sender channel to push images to.
   pub fn start(&mut self, chan_tx: Sender<(Mat, Vec<u8>)>) -> Result<()> {
     // Matrix buffer for which to store captured images to.
@@ -230,7 +230,7 @@ impl Drop for CameraDevice {
 
 /// Adjusts the VideoCapture instance to match expected set configurations.
 ///
-/// # Arguments:
+/// Args:
 /// * video_cap - A VideoCapture reference for which to configure.
 /// * video_props - Video properties to configure video stream consumption with.
 fn adjust_video_frame(video_cap: &mut VideoCapture, video_props: &CameraVideoProps) -> Result<()> {

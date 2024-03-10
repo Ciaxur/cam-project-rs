@@ -138,23 +138,28 @@ async fn start_local_video_ingestor(
       // TODO: Update to not yeet into channel but rather into ring buffer that 4bit.api
       // can consume and THEN we consume in another thread.
       // Add consumed images into ring buffer.
-      // let cam_rb = cam_rb.
       let mut cam_rb = cam_rb.write().await;
       for img in adjusted_camera_buffers.iter() {
         cam_rb.push(img.image_buff.clone()).await;
       }
-      // Send a defaulted stream response.
-      let stream_response = CameraStreamResponse {
-        cameras: device_map.clone(),
-      };
+      // DEBUG:
+      info!(
+        "Pushed {} into camera ring buffer",
+        adjusted_camera_buffers.len()
+      );
 
-      let chan_tx_res = produced_images_tx
-        .send((stream_response, Some(adjusted_camera_buffers)))
-        .await;
-      if let Err(err) = chan_tx_res {
-        error!("VideoDeviceIngestor: Failed to send consumed image on channel -> {err}");
-        break;
-      }
+      // Send a defaulted stream response.
+      // let stream_response = CameraStreamResponse {
+      //   cameras: device_map.clone(),
+      // };
+
+      // let chan_tx_res = produced_images_tx
+      //   .send((stream_response, Some(adjusted_camera_buffers)))
+      //   .await;
+      // if let Err(err) = chan_tx_res {
+      //   error!("VideoDeviceIngestor: Failed to send consumed image on channel -> {err}");
+      //   break;
+      // }
 
       img_buffer.clear()
     }
@@ -446,30 +451,30 @@ pub async fn run() -> Result<(), String> {
 
   // Camera API client: Consumes an image stream from the given endpoint, applies image adjustments
   // and writes consumed images to a channel for which to be used for classification.
-  let (camera_api_producer_task, camera_api_consumer_task) = start_camera_api_client(
-    &client_api,
-    consumed_images_tx.clone(),
-    consumed_images_rx,
-    classify_request_tx,
-  )
-  .await;
+  // let (camera_api_producer_task, camera_api_consumer_task) = start_camera_api_client(
+  //   &client_api,
+  //   consumed_images_tx.clone(),
+  //   consumed_images_rx,
+  //   classify_request_tx,
+  // )
+  // .await;
 
   // Image classification: Consumes images from API client, sending them to grpc classifier server,
   // and consumes responses while taking action on the classification.
-  let classifier_client_task = start_classifier_client(
-    &client_api,
-    &config,
-    classify_response_tx,
-    classify_response_rx,
-    classify_request_rx,
-  )
-  .await
-  .unwrap();
+  // let classifier_client_task = start_classifier_client(
+  //   &client_api,
+  //   &config,
+  //   classify_response_tx,
+  //   classify_response_rx,
+  //   classify_request_rx,
+  // )
+  // .await
+  // .unwrap();
 
   let _ = tokio::join!(
-    camera_api_producer_task,
-    camera_api_consumer_task,
-    classifier_client_task,
+    // camera_api_producer_task,
+    // camera_api_consumer_task,
+    // classifier_client_task,
     video0_ingestor_task,
     video0_image_adjustment_task,
     local_cam_server_task,

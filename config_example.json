@@ -1,6 +1,9 @@
 {
   "cooldown_s": 20,
   "video_fd": "/dev/video0",
+  "camera_server": {
+    "port": 6969
+  },
   "camera_properties": {
     "image_width": 300.0,
     "image_height": 300.0,
@@ -16,5 +19,7 @@
   },
   "grpc_server_endpoint": "http://4bit.local:8000",
   "image_storage_path": "/mnt/apt_cam_captures",
-  "accepted_match_labels": [0]
+  "accepted_match_labels": [
+    0
+  ]
 }

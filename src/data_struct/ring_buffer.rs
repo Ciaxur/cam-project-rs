@@ -1,5 +1,4 @@
 use std::{
-  collections::VecDeque,
   fmt::Debug,
   sync::{Condvar, Mutex},
 };
@@ -7,9 +6,9 @@ use tokio::sync;
 
 use anyhow::{Error, Result};
 
-pub struct RingBuffer<T: Clone + Debug> {
+pub struct RingBuffer<T: Clone + Debug + Default> {
   capacity: usize,
-  buffer: sync::RwLock<VecDeque<T>>,
+  buffer: sync::RwLock<Vec<T>>,
   head: usize,
   tail: usize,
 
@@ -18,10 +17,13 @@ pub struct RingBuffer<T: Clone + Debug> {
   lock: Mutex<bool>,
 }
 
-impl<T: Clone + Debug> RingBuffer<T> {
+impl<T: Clone + Debug + Default> RingBuffer<T> {
   pub fn new(capacity: usize) -> Self {
+    let mut v = Vec::<T>::new();
+    v.resize(capacity, T::default());
+
     Self {
-      buffer: sync::RwLock::new(VecDeque::<T>::new()),
+      buffer: sync::RwLock::new(v),
       capacity,
       head: 0,
       tail: 0,

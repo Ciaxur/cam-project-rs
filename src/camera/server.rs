@@ -29,10 +29,10 @@ impl CameraServer {
 
     let _ = HttpServer::new(move || {
       App::new()
-        .app_data(web::Data::clone(&data))
+        .app_data(data.clone())
         .route("/", web::get().to(serve))
     })
-    .bind(("127.0.0.1", self.port))
+    .bind(("0.0.0.0", self.port))
     .unwrap()
     .run()
     .await;

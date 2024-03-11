@@ -1,4 +1,4 @@
-# Aparmtment Camera
+# The Camera Project
 
 Camera object detection client and server project. Server provides an API for running
 the object detection model and the client handles providing the images to be used as input.

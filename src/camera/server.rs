@@ -32,7 +32,7 @@ impl CameraServer {
         .app_data(web::Data::clone(&data))
         .route("/", web::get().to(serve))
     })
-    .bind(("127.0.0.1", self.port))
+    .bind(("0.0.0.0", self.port))
     .unwrap()
     .run()
     .await;
@@ -40,6 +40,8 @@ impl CameraServer {
 }
 
 async fn serve(data: web::Data<RwLock<RingBuffer<Vec<u8>>>>) -> impl Responder {
+  info!("Serving data yo!");
+
   let stream = stream! {
     let mut data = data.write().await;
     loop {

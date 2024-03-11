@@ -1,4 +1,3 @@
-use log::info;
 use std::{
   fmt::Debug,
   sync::{Condvar, Mutex},
@@ -41,12 +40,6 @@ impl<T: Clone + Debug + Default> RingBuffer<T> {
     let mut buffer = self.buffer.write().await;
 
     let next_tail = (self.tail + 1) % self.capacity;
-    info!(
-      "Pushing data into buffer at {} where capacity is {} | vec.size -> {}",
-      next_tail,
-      self.capacity,
-      buffer.len(),
-    );
     buffer[next_tail] = value;
 
     // Buffer was full and we started overwriting head.

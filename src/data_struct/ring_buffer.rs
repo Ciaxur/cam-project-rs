@@ -1,20 +1,16 @@
-use std::{
-  fmt::Debug,
-  sync::{Condvar, Mutex},
-};
+use std::fmt::Debug;
 use tokio::sync;
 
-use anyhow::{Error, Result};
+pub enum RingBufferResult<T> {
+  Some(T),
+  Empty,
+}
 
 pub struct RingBuffer<T: Clone + Debug + Default> {
   capacity: usize,
   buffer: sync::RwLock<Vec<T>>,
   head: usize,
   tail: usize,
-
-  // Conditional variables to wait on.
-  not_empty: Condvar,
-  lock: Mutex<bool>,
 }
 
 impl<T: Clone + Debug + Default> RingBuffer<T> {
@@ -27,8 +23,6 @@ impl<T: Clone + Debug + Default> RingBuffer<T> {
       capacity,
       head: 0,
       tail: 0,
-      not_empty: Condvar::new(),
-      lock: Mutex::new(false),
     }
   }
 
@@ -47,22 +41,20 @@ impl<T: Clone + Debug + Default> RingBuffer<T> {
       self.head = (self.head + 1) % self.capacity;
     }
     self.tail = next_tail;
-    self.not_empty.notify_one();
   }
 
   /// Returns the head value from the stored RingBuffer instance if
   /// available.
-  pub async fn pop(&mut self) -> Result<T, Error> {
-    let buffer = self.buffer.read().await;
-    while self.is_empty() {
-      let lock = self.lock.lock().unwrap();
-      let _ = self.not_empty.wait(lock);
+  pub async fn pop(&mut self) -> RingBufferResult<T> {
+    if self.is_empty() {
+      return RingBufferResult::Empty;
     }
 
+    let buffer = self.buffer.read().await;
     let buffer_idx = self.head;
     self.head = (self.head + 1) % self.capacity;
     let value = buffer[buffer_idx].clone();
-    Ok(value)
+    RingBufferResult::Some(value)
   }
 
   /// Returns whether the RingBuffer is empty or not.

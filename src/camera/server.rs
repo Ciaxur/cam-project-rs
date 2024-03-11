@@ -1,9 +1,9 @@
 /// Implementation for hosting a tcp server to stream a video device.
-use crate::data_struct::ring_buffer::RingBuffer;
+use crate::data_struct::ring_buffer::{RingBuffer, RingBufferResult};
 use actix_web::http::header::ACCESS_CONTROL_ALLOW_ORIGIN;
 use actix_web::{http::header::ContentType, web, App, HttpResponse, HttpServer, Responder};
 use async_stream::stream;
-use log::info;
+use log::{debug, info};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -39,13 +39,19 @@ impl CameraServer {
   }
 }
 
-async fn serve(data: web::Data<RwLock<RingBuffer<Vec<u8>>>>) -> impl Responder {
+async fn serve(data: web::Data<Arc<RwLock<RingBuffer<Vec<u8>>>>>) -> impl Responder {
   let stream = stream! {
-    let mut data = data.write().await;
     loop {
+      let mut data = data.write().await;
       match data.pop().await {
-        Ok(img) => yield Ok::<_, Infallible>(web::Bytes::from(img)),
-        Err(_) => todo!()
+        RingBufferResult::Some(img) => {
+          debug!("Streaming {}B RingBuffer image", img.len());
+          yield Ok::<_, Infallible>(web::Bytes::from(img))
+        }
+        RingBufferResult::Empty => {
+          debug!("RingBuffer is empty. Waiting on more");
+          tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+        }
       }
     }
   };

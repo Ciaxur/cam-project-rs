@@ -1,4 +1,3 @@
-use crate::camera::CameraVideoProps;
 use anyhow::{Error, Result};
 use classifier::image_classifier_client::ImageClassifierClient;
 use classifier::{ClassifyImageRequest, ClassifyImageResponse};
@@ -21,8 +20,8 @@ pub struct ClassifierClient {
   // and stop active workers.
   tokio_tasks: Vec<tokio::task::JoinHandle<()>>,
 
-  // Camera properties instance.
-  camera_properties: CameraVideoProps,
+  // gRPC channel buffer size.
+  channel_buff_size: usize,
 }
 
 impl ClassifierClient {
@@ -31,12 +30,12 @@ impl ClassifierClient {
   ///
   /// Args:
   /// * endpoint: Endpoint to the gRPC classifier server.
-  /// * camera_properties: Camera properties.
-  pub fn new(endpoint: String, camera_properties: CameraVideoProps) -> ClassifierClient {
+  /// * chan_buff_size: gRPC channel buffer size.
+  pub fn new(endpoint: String, channel_buff_size: usize) -> ClassifierClient {
     Self {
       endpoint,
       tokio_tasks: vec![],
-      camera_properties,
+      channel_buff_size,
     }
   }
 
@@ -60,14 +59,11 @@ impl ClassifierClient {
     tx_response: mpsc::Sender<ClassifyImageResponse>,
     rx_request: mpsc::Receiver<ClassifyImageRequest>,
   ) -> Result<()> {
-    let buffer_size: usize =
-      (self.camera_properties.image_width * self.camera_properties.image_height * 20.0) as usize;
-
     // Construct a channel endpoint for which to be used to create a channel from.
     let channel_endpoint: Endpoint = Channel::from_shared(self.endpoint.clone())?
       .concurrency_limit(10)
       .connect_timeout(Duration::from_secs(5))
-      .buffer_size(buffer_size);
+      .buffer_size(self.channel_buff_size);
 
     // Start tokio workers which handle the stream.
     let task = tokio::spawn(stream_call_with_retry(

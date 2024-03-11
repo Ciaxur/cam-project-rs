@@ -1,3 +1,5 @@
+pub mod worker;
+
 use anyhow::{Error, Result};
 use log::{debug, error, info};
 use opencv::core::Vector;
@@ -26,7 +28,7 @@ pub struct CameraVideoEncoding {
   pub grayscale: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct CameraVideoProps {
   // Video properties. These are required to resize and process the
   // consumed video stream.

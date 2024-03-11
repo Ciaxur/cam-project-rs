@@ -1,4 +1,6 @@
+pub mod camera_api_client_worker;
 pub mod classifier_grpc;
+pub mod classifier_worker;
 pub mod interfaces;
 pub mod ndarray_util;
 pub mod storage_manager;
@@ -16,6 +18,8 @@ use std::io::Read;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::Sender;
 use tokio::time::{Duration, Instant};
+
+use crate::config::ConfigCameraAPI;
 
 /// Helper function for loading in certificates for mTLS.
 ///
@@ -75,6 +79,9 @@ pub struct CameraApi {
   endpoint: String,
   target_fps: f64,
 
+  // Clone of the camera api configuration.
+  api_config: ConfigCameraAPI,
+
   // Cached atmoic Camera List and Entries from server response.
   camera_list: Arc<RwLock<CameraListResponse>>,
   camera_entries: Arc<RwLock<HashMap<String, CameraEntry>>>,
@@ -93,7 +100,7 @@ impl CameraApi {
   ///
   /// # Returns:
   /// * CameraApi instance.
-  pub fn new(opts: CameraApiOptions) -> Result<CameraApi, Error> {
+  pub fn new(opts: CameraApiOptions, api_config: &ConfigCameraAPI) -> Result<CameraApi, Error> {
     // Construct credentials.
     let (video_identity, trusted_cas) = load_certificates(opts.credentials)?;
 
@@ -124,6 +131,7 @@ impl CameraApi {
       client,
       endpoint: opts.endpoint,
       target_fps: opts.target_fps,
+      api_config: api_config.clone(),
       camera_entries: Arc::new(RwLock::new(HashMap::new())),
       camera_list: Arc::new(RwLock::new(CameraListResponse { cameras: vec![] })),
       camera_entries_last_updated: None,
@@ -144,7 +152,7 @@ impl CameraApi {
   /// * Deserialized interface struct of type T.
   async fn _invoke_api<'a, T>(
     &self,
-    api_endpoint: String,
+    api_endpoint: &String,
     method: Method,
     payload: String,
   ) -> Result<T>
@@ -195,7 +203,7 @@ impl CameraApi {
   /// * Deserialized response body.
   async fn _invoke_api_to_bytes(
     &self,
-    api_endpoint: String,
+    api_endpoint: &String,
     method: Method,
     payload: String,
   ) -> Result<Vec<u8>> {
@@ -245,9 +253,12 @@ impl CameraApi {
     })?;
 
     // Construct api endpoint.
-    let api_endpoint = String::from("telegram/message");
     let _ = self
-      ._invoke_api_to_bytes(api_endpoint, Method::POST, payload)
+      ._invoke_api_to_bytes(
+        &self.api_config.post_telegram_endpoint_path,
+        Method::POST,
+        payload,
+      )
       .await
       .map_err(|err| {
         Error::msg(format!(
@@ -265,9 +276,12 @@ impl CameraApi {
   /// * Deserialized response.
   async fn list_cameras(&self) -> Result<CameraListResponse> {
     // Resuse internal generic function to invoke an API request.
-    let api_endpoint = String::from("camera/list");
     let cameras = self
-      ._invoke_api(api_endpoint, Method::GET, "{}".to_string())
+      ._invoke_api(
+        &self.api_config.get_camera_list_endpoint_path,
+        Method::GET,
+        "{}".to_string(),
+      )
       .await?;
     Ok(cameras)
   }
@@ -275,9 +289,12 @@ impl CameraApi {
   // / Grabs a snapshot of all the cameras connected to the API server.
   pub async fn snap_cameras(&self) -> Result<CameraSnapResponse> {
     // Resuse internal generic function to invoke an API request.
-    let api_endpoint = String::from("camera/snap");
     let camera_snaps = self
-      ._invoke_api(api_endpoint, Method::GET, "{}".to_string())
+      ._invoke_api(
+        &self.api_config.get_camera_snap_endpoint_path,
+        Method::GET,
+        "{}".to_string(),
+      )
       .await?;
     Ok(camera_snaps)
   }
@@ -406,7 +423,10 @@ impl CameraApi {
     stream_tx: Sender<(CameraStreamResponse, Option<Vec<AdjustedCameraBuffer>>)>,
   ) -> Result<()> {
     let server_endpoint = self.endpoint.clone();
-    let endpoint = format!("https://{server_endpoint}/camera/subscribe");
+    let endpoint = format!(
+      "https://{server_endpoint}/{}",
+      self.api_config.get_camera_stream_endpoint_path
+    );
 
     // Open an http request with the server, then continuously consume response chunks.
     let res = self.client.get(endpoint).body("{}").send().await?;

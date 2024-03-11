@@ -1,3 +1,4 @@
+use log::info;
 use std::{
   collections::VecDeque,
   fmt::Debug,
@@ -38,6 +39,10 @@ impl<T: Clone + Debug> RingBuffer<T> {
     let mut buffer = self.buffer.write().await;
 
     let next_tail = (self.tail + 1) % self.capacity;
+    info!(
+      "Pushing data into buffer at {} where capacity is {}",
+      next_tail, self.capacity
+    );
     buffer[next_tail] = value;
 
     // Buffer was full and we started overwriting head.

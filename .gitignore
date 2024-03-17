@@ -1,10 +1,10 @@
 *.jpg
-opencv-venv
 *.pyc
 *_pb2*.py
 certs
 .vscode
 config.json
+onnxruntime-workspace
 
 # Added by cargo
 /target

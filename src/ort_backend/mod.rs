@@ -8,7 +8,7 @@ use ort::{inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider
 use regex::Regex;
 
 pub struct YoloOrtModel {
-  pub session: Session,
+  session: Session,
   labels: HashMap<String, String>,
 }
 

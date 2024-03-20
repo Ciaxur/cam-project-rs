@@ -1,15 +1,40 @@
 use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer};
 use log::{error, info};
 use ndarray::{Array, Axis, CowArray, IxDyn};
-use ort::{inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, Value};
+use ort::{
+  inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, SessionOutputs,
+  Tensor, Value,
+};
 use regex::Regex;
 
 pub struct YoloOrtModel {
   session: Session,
-  labels: HashMap<String, String>,
+  labels: HashMap<u32, String>,
+  input_shape: Vec<i64>,
+}
+
+pub struct Bbox {
+  pub x: f32,
+  pub y: f32,
+  pub w: f32,
+  pub h: f32,
+}
+
+struct YoloProbability {
+  pub class_id: u32,
+  pub label: String,
+  pub confidence: f64,
+}
+
+struct YoloDetection {
+  pub bbox: Bbox,
+  pub class_probability: Vec<YoloProbability>,
+
+  // Resized to match the original input.
+  pub resized_bbox: Bbox,
 }
 
 impl YoloOrtModel {
@@ -46,17 +71,25 @@ impl YoloOrtModel {
       }
     };
 
+    let session = builder.with_model_from_file(onnx_model_path)?;
+    let input_shape = session.inputs[0]
+      .input_type
+      .tensor_dimensions()
+      .unwrap()
+      .clone();
+
     let mut model = Self {
       // Commit the builder by loading the model.
-      session: builder.with_model_from_file(onnx_model_path)?,
+      session,
       labels: HashMap::new(),
+      input_shape,
     };
     model.extract_labels_from_metadata()?;
 
     Ok(model)
   }
 
-  pub fn get_label(&self, key: &String) -> Option<&String> {
+  pub fn get_label(&self, key: &u32) -> Option<&String> {
     self.labels.get(key)
   }
 
@@ -76,6 +109,7 @@ impl YoloOrtModel {
     Ok(format!("{author} YOLO-{version}"))
   }
 
+  // TODO: optimize
   fn preprocess(&self, input: &DynamicImage) -> Result<Array<f32, IxDyn>, Error> {
     let expected_input_shape = self.session.inputs[0]
       .input_type
@@ -112,47 +146,83 @@ impl YoloOrtModel {
     }
   }
 
-  fn run_inference(&self, xs: &Array<f32, IxDyn>) -> Result<(), Error> {
-    let ys = self.session.run(inputs!["images" => xs.view()]?)?;
-
-    // TODO: understand how tf this is layed out.
-
+  // TODO: optimize
+  fn postprocess(
+    &self,
+    xs0: &DynamicImage,
+    ys: SessionOutputs,
+  ) -> Result<Vec<YoloDetection>, Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
     let output = ys[output_name].extract_tensor::<f32>()?;
-    info!("Output -> {:?}", output);
+    let in_width = self.input_shape[3];
+    let in_height = self.input_shape[2];
 
-    // Draw boxes around match.
-    // let mut boxes = Vec::new();
-    for row in output
-      .view()
-      .slice(ndarray::s![.., .., 0])
-      .axis_iter(Axis(0))
-    {
-      let row: Vec<_> = row.iter().copied().collect();
-      let (class_id, prob) = row
-        .iter()
-        // skip bounding box coordinates
-        .skip(4)
-        .enumerate()
-        .map(|(index, value)| (index, *value))
-        .reduce(|acc, row| if row.1 > acc.1 { row } else { acc })
-        .unwrap();
+    // Original input resolution.
+    let og_width = xs0.width();
+    let og_height = xs0.height();
+    let ratio: f32 = (in_width as f32 / og_width as f32).min(in_height as f32 / og_height as f32);
 
-      /**
-       * WIP: continue here:
-       * https://github.com/pykeio/ort/blob/main/examples/yolov8/examples/yolov8.rs#L83
-       * https://github.com/ultralytics/ultralytics/blob/main/examples/YOLOv8-ONNXRuntime-Rust/src/ort_backend.rs
-       */
-      let label = self.get_label(&class_id.to_string()).unwrap();
-      info!("class_id={class_id} | label={label} | prob={prob}");
+    // YOLOv8 Model output shape [1, 84, 8400] means the following:
+    // - 1st Dimension -> Batch size
+    // - 2nd Dimension ->
+    //   - [0..4] -> bounding box coordinates (x, y, width and height) of the detected object.
+    //   - [4..]  -> probability for each class.
+    // - 3rd Dimension -> Max number of detected objects that the model can detect.
+    //
+    let total_classes = self.labels.len();
+    let cxywh_offset: usize = 4;
+
+    // Iterate over the batches, which in our case is capable of only one.
+    let mut result: Vec<YoloDetection> = Vec::new();
+
+    for anchor in output.view().axis_iter(Axis(0)) {
+      for prediction in anchor.axis_iter(Axis(1)) {
+        // First 4 elements are the bounding box coordinates (x, y, width and height).
+        let bbox = prediction.slice(ndarray::s![0..cxywh_offset]);
+        let bbox = Bbox {
+          x: bbox[0],
+          y: bbox[1],
+          w: bbox[2],
+          h: bbox[3],
+        };
+
+        // Adjust bounding box to match the original input.
+        let resized_bbox = Bbox {
+          x: bbox.x / ratio,
+          y: bbox.y / ratio,
+          w: bbox.w / ratio,
+          h: bbox.h / ratio,
+        };
+
+        let detection = YoloDetection {
+          bbox,
+          resized_bbox,
+
+          // Remaining elements are probabilities for each class [4..84].
+          class_probability: prediction
+            .slice(ndarray::s![cxywh_offset..(cxywh_offset + total_classes)])
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+              let id: u32 = i as u32;
+              let prob: f64 = *v as f64;
+
+              YoloProbability {
+                class_id: id as u32,
+                label: self.labels.get(&id).unwrap().to_string(),
+                confidence: prob,
+              }
+            })
+            .collect(),
+        };
+
+        result.push(detection);
+      }
     }
 
-    // TODO: make a result struct.
-    Ok(())
+    Ok(result)
   }
-
-  fn postprocess(&self) {}
 
   pub fn run(&self, input: DynamicImage) -> Result<(), Error> {
     // Pre-process.
@@ -162,13 +232,13 @@ impl YoloOrtModel {
 
     // Inference.
     let inference_dt = Instant::now();
-    self.run_inference(&xs)?;
+    let ys = self.session.run(inputs!["images" => xs.view()]?)?;
     info!("Inference took {:?}", inference_dt.elapsed());
 
     // Post-process.
-    // let post_process_dt = Instant::now();
-    // self.postprocess();
-    // info!("Post-process took {:?}", post_process_dt.elapsed());
+    let post_process_dt = Instant::now();
+    let _ = self.postprocess(&input, ys)?;
+    info!("Post-process took {:?}", post_process_dt.elapsed());
 
     // Results.
     Ok(())
@@ -178,10 +248,10 @@ impl YoloOrtModel {
     match self.session.metadata()?.custom("names")? {
       Some(labels_raw) => {
         for cap in Regex::new(r"(\d+):\s+\'(\w*\s*\w*)\'")?.captures_iter(&labels_raw) {
-          let class_id = cap.get(1).unwrap().as_str();
+          let class_id: u32 = cap.get(1).unwrap().as_str().parse::<u32>()?;
           let label = cap.get(2).unwrap().as_str();
 
-          self.labels.insert(class_id.to_string(), label.to_string());
+          self.labels.insert(class_id, label.to_string());
         }
         Ok(())
       }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Instant};
 use anyhow::{Error, Result};
 use log::{debug, info};
 use ndarray::{Array, Axis, IxDyn};
-use opencv::core::{Mat, MatTraitConst, Rect, Scalar, Size, Vector};
+use opencv::core::{Mat, MatSize, MatTrait, MatTraitConst, Point, Rect, Scalar, Size, Vector};
 use opencv::{imgcodecs, imgproc};
 use ort::{
   inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, SessionOutputs,
@@ -224,7 +224,8 @@ impl YoloOrtModel {
     // Original input resolution.
     let og_width = xs0.cols();
     let og_height = xs0.rows();
-    let ratio: f32 = (in_width as f32 / og_width as f32).min(in_height as f32 / og_height as f32);
+    let w_ratio: f32 = og_width as f32 / in_width as f32;
+    let h_ratio: f32 = og_height as f32 / in_height as f32;
 
     // YOLOv8 Model output shape [1, 84, 8400] means the following:
     // - 1st Dimension -> Batch size
@@ -244,6 +245,7 @@ impl YoloOrtModel {
       for prediction in anchor.axis_iter(Axis(1)) {
         // First 4 elements are the bounding box coordinates (x, y, width and height).
         let bbox = prediction.slice(ndarray::s![0..cxywh_offset]);
+        // TODO: do we need to center x/y here like the resized one?
         let bbox = Bbox {
           x: bbox[0],
           y: bbox[1],
@@ -252,11 +254,16 @@ impl YoloOrtModel {
         };
 
         // Adjust bounding box to match the original input.
+        // We can do so by adjusting the ratio.
+        // Then centering x/y since they point at the detected image center.
+        // TODO: BUG: fix this. this is wrong!
+        let rw = bbox.w * w_ratio;
+        let rh = bbox.y * h_ratio;
         let resized_bbox = Bbox {
-          x: bbox.x / ratio,
-          y: bbox.y / ratio,
-          w: bbox.w / ratio,
-          h: bbox.h / ratio,
+          x: (bbox.x * w_ratio) - (rw / 2.),
+          y: (bbox.y * h_ratio) - (rh / 4.),
+          w: rw,
+          h: rh / 2.,
         };
 
         let class_predictions: Vec<YoloPrediction> = prediction
@@ -270,27 +277,48 @@ impl YoloOrtModel {
 
             if prob >= self.prob_threshold {
               let _color = self.color_palette[i];
-              let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.0);
+              let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.);
+              let label = self.labels.get(&id).unwrap().to_string();
 
               // Add detections to input image.
-              // imgproc::rectangle(
-              //   &mut img_mat,
-              //   Rect::new(
-              //     resized_bbox.x as i32,
-              //     resized_bbox.y as i32,
-              //     resized_bbox.w as i32,
-              //     resized_bbox.h as i32,
-              //   ),
-              //   color.into(),
-              //   1,
-              //   imgproc::FILLED,
-              //   0,
-              // )
-              // .expect("draw detection bbox");
+              imgproc::rectangle(
+                &mut img_mat,
+                Rect::new(
+                  resized_bbox.x as i32,
+                  resized_bbox.y as i32,
+                  resized_bbox.w as i32,
+                  resized_bbox.h as i32,
+                ),
+                color,
+                1,
+                imgproc::LINE_8,
+                0,
+              )
+              .expect("draw detection bbox");
+
+              // Add label to the image.
+              let text_origin_x = resized_bbox.x;
+              let text_origin_y = resized_bbox.y;
+
+              // TEST:
+              // TODO: use the OG color image. use white if image is grayscale otherwise.
+              let white_color = Scalar::new(255., 255., 255., 255.);
+              imgproc::put_text(
+                &mut img_mat,
+                label.as_str(),
+                Point::new(text_origin_x as i32, text_origin_y as i32),
+                imgproc::FONT_HERSHEY_SIMPLEX,
+                0.5,
+                white_color,
+                1,
+                imgproc::LINE_AA,
+                false,
+              )
+              .expect("draw text label");
 
               Some(YoloPrediction {
                 class_id: id as u32,
-                label: self.labels.get(&id).unwrap().to_string(),
+                label,
                 confidence: prob,
                 color,
               })
@@ -344,11 +372,6 @@ impl YoloOrtModel {
     let post_process_dt = Instant::now();
     let yolo_output = self.postprocess(xs_mat, ys)?;
     info!("Post-process took {:?}", post_process_dt.elapsed());
-
-    // DEBUG:
-    opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
-    opencv::highgui::imshow("yeet", &yolo_output.output_img_mat)?;
-    opencv::highgui::wait_key(0)?;
 
     // Results.
     Ok(yolo_output)

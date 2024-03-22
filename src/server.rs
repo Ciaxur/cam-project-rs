@@ -22,7 +22,7 @@ fn run_server() -> Result<(), Error> {
   let mut _img_mat = img.clone();
 
   // TODO: ensure color is preserved on response but use grayscale for inference.
-  opencv::imgproc::cvt_color(&img, &mut _img_mat, opencv::imgproc::COLOR_BGR2GRAY, 0)?;
+  // opencv::imgproc::cvt_color(&img, &mut _img_mat, opencv::imgproc::COLOR_BGR2GRAY, 0)?;
 
   let mut image_vec: Vector<u8> = Vector::new();
   let encode_flags: Vector<i32> = Vector::new();
@@ -32,7 +32,13 @@ fn run_server() -> Result<(), Error> {
 
   // client_req_img.
   info!("Image loaded -> ({}, {})", img.cols(), img.rows());
-  let _ = yolo_model.run(client_req_img)?;
+  let out = yolo_model.run(client_req_img)?;
+
+  // DEBUG:
+  opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
+  opencv::highgui::imshow("yeet", &out.output_img_mat)?;
+  opencv::highgui::wait_key(0)?;
+
   Ok(())
 }
 

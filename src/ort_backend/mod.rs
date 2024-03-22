@@ -1,12 +1,12 @@
 use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};
-use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer};
-use log::{debug, error, info};
-use ndarray::{Array, Axis, CowArray, IxDyn};
+use log::{debug, info};
+use ndarray::{Array, Axis, IxDyn};
+use opencv::core::{Mat, MatTraitConst, Rect, Scalar, Size, Vector};
+use opencv::{imgcodecs, imgproc};
 use ort::{
   inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, SessionOutputs,
-  Tensor, Value,
 };
 use rand::{thread_rng, Rng};
 use regex::Regex;
@@ -15,7 +15,7 @@ pub struct YoloOrtModel {
   session: Session,
   labels: HashMap<u32, String>,
   input_shape: Vec<i64>,
-  color_palette: Vec<(i64, i64, i64)>,
+  color_palette: Vec<(f64, f64, f64)>,
   prob_threshold: f64,
 }
 
@@ -28,15 +28,15 @@ pub struct Bbox {
 }
 
 #[derive(Debug, Clone)]
-struct YoloPrediction {
+pub struct YoloPrediction {
   pub class_id: u32,
   pub label: String,
   pub confidence: f64,
-  pub color: image::Rgb<i64>,
+  pub color: Scalar,
 }
 
 #[derive(Debug, Clone)]
-struct YoloDetection {
+pub struct YoloDetection {
   pub bbox: Bbox,
   pub predictions: Vec<YoloPrediction>,
 
@@ -45,8 +45,11 @@ struct YoloDetection {
 }
 
 #[derive(Debug, Clone)]
-struct YoloOutput {
-  pub output_img: DynamicImage,
+pub struct YoloOutput {
+  pub output_img: Vector<u8>,
+
+  // TODO: have both resized and original matricies of that have bboxes.
+  pub output_img_mat: Mat,
   pub detections: Vec<YoloDetection>,
 }
 
@@ -109,9 +112,9 @@ impl YoloOrtModel {
       .iter()
       .map(|_| {
         (
-          rng.gen_range(0..=255),
-          rng.gen_range(0..=255),
-          rng.gen_range(0..=255),
+          rng.gen_range(0.0..=255.0),
+          rng.gen_range(0.0..=255.0),
+          rng.gen_range(0.0..=255.0),
         )
       })
       .collect();
@@ -140,7 +143,8 @@ impl YoloOrtModel {
   }
 
   // TODO: optimize
-  fn preprocess(&self, input: &DynamicImage) -> Result<Array<f32, IxDyn>, Error> {
+  // returns pre-processed image and encoded original image.
+  fn preprocess(&self, input: &Vec<u8>) -> Result<(Array<f32, IxDyn>, Mat), Error> {
     let expected_input_shape = self.session.inputs[0]
       .input_type
       .tensor_dimensions()
@@ -149,8 +153,36 @@ impl YoloOrtModel {
 
     if let [num_imgs_dim, pixel_dim, height_dim, width_dim] = expected_input_shape[..4] {
       // Resize the inputs to match expected by the model.
-      let xs = input.resize_exact(width_dim as u32, height_dim as u32, FilterType::CatmullRom);
-      debug!("Input Image resized -> {:?}", xs.dimensions());
+      let input_mat = imgcodecs::imdecode(
+        &Vector::<u8>::from(input.to_vec()),
+        imgcodecs::IMREAD_ANYCOLOR,
+      )?;
+      let mut xs_mat = Mat::default();
+      imgproc::resize(
+        &input_mat,
+        &mut xs_mat,
+        Size {
+          height: height_dim as i32,
+          width: width_dim as i32,
+        },
+        0.0,
+        0.0,
+        imgproc::INTER_LINEAR,
+      )?;
+      debug!(
+        "Input Image resized -> ({}, {})",
+        xs_mat.cols(),
+        xs_mat.rows()
+      );
+
+      // Convert matrix to a byte array.
+      let mut xs_vec: Vector<u8> = Vector::new();
+      let encode_flags: Vector<i32> = Vector::new();
+      imgcodecs::imencode(".jpg", &xs_mat, &mut xs_vec, &encode_flags)?;
+
+      // Load the image and then convert to a 3D Array.
+      let img = image::load_from_memory(&xs_vec.to_vec())?.to_rgb8();
+      let (width, height) = img.dimensions();
 
       let mut input = Array::zeros((
         num_imgs_dim as usize,
@@ -159,15 +191,19 @@ impl YoloOrtModel {
         width_dim as usize,
       ))
       .into_dyn();
-      for pixel in xs.pixels() {
-        let x = pixel.0 as _;
-        let y = pixel.1 as _;
-        let [r, g, b, _] = pixel.2 .0;
-        input[[0, 0, y, x]] = (r as f32) / 255.;
-        input[[0, 1, y, x]] = (g as f32) / 255.;
-        input[[0, 2, y, x]] = (b as f32) / 255.;
+      for y in 0..height {
+        for x in 0..width {
+          let pixel: &image::Rgb<u8> = img.get_pixel(x, y);
+          let [r, g, b] = pixel.0;
+
+          // Set all rgb values for each pixel.
+          input[[0, 0, y as usize, x as usize]] = (r as f32) / 255.;
+          input[[0, 1, y as usize, x as usize]] = (g as f32) / 255.;
+          input[[0, 2, y as usize, x as usize]] = (b as f32) / 255.;
+        }
       }
-      Ok(input)
+
+      Ok((input, input_mat))
     } else {
       Err(Error::msg(format!(
         "Expected model inputs to contain 4 dimensions but got -> {:?}",
@@ -177,7 +213,8 @@ impl YoloOrtModel {
   }
 
   // TODO: optimize
-  fn postprocess(&self, xs0: &DynamicImage, ys: SessionOutputs) -> Result<YoloOutput, Error> {
+  // xs0 -> original encoded image.
+  fn postprocess(&self, xs0: Mat, ys: SessionOutputs) -> Result<YoloOutput, Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
     let output = ys[output_name].extract_tensor::<f32>()?;
@@ -185,8 +222,8 @@ impl YoloOrtModel {
     let in_height = self.input_shape[2];
 
     // Original input resolution.
-    let og_width = xs0.width();
-    let og_height = xs0.height();
+    let og_width = xs0.cols();
+    let og_height = xs0.rows();
     let ratio: f32 = (in_width as f32 / og_width as f32).min(in_height as f32 / og_height as f32);
 
     // YOLOv8 Model output shape [1, 84, 8400] means the following:
@@ -201,7 +238,7 @@ impl YoloOrtModel {
 
     // Iterate over the batches, which in our case is capable of only one.
     let mut detections: Vec<YoloDetection> = Vec::new();
-    let mut output_img = xs0.to_rgb8();
+    let mut img_mat = xs0.clone();
 
     for anchor in output.view().axis_iter(Axis(0)) {
       for prediction in anchor.axis_iter(Axis(1)) {
@@ -232,10 +269,24 @@ impl YoloOrtModel {
             let prob: f64 = *v as f64;
 
             if prob >= self.prob_threshold {
-              let color = image::Rgb(self.color_palette[i].into());
+              let _color = self.color_palette[i];
+              let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.0);
 
               // Add detections to input image.
-              // WIP:
+              // imgproc::rectangle(
+              //   &mut img_mat,
+              //   Rect::new(
+              //     resized_bbox.x as i32,
+              //     resized_bbox.y as i32,
+              //     resized_bbox.w as i32,
+              //     resized_bbox.h as i32,
+              //   ),
+              //   color.into(),
+              //   1,
+              //   imgproc::FILLED,
+              //   0,
+              // )
+              // .expect("draw detection bbox");
 
               Some(YoloPrediction {
                 class_id: id as u32,
@@ -267,16 +318,21 @@ impl YoloOrtModel {
       }
     }
 
+    let mut _img_buf = Vector::new();
+    let imwrite_flags: Vector<i32> = Vector::new();
+    opencv::imgcodecs::imencode(".jpeg", &img_mat, &mut _img_buf, &imwrite_flags).expect("shit");
+
     Ok(YoloOutput {
       detections,
-      output_img: DynamicImage::ImageRgb8(output_img),
+      output_img: _img_buf,
+      output_img_mat: img_mat,
     })
   }
 
-  pub fn run(&self, input: DynamicImage) -> Result<(), Error> {
+  pub fn run(&self, input: Vec<u8>) -> Result<YoloOutput, Error> {
     // Pre-process.
     let pre_process_dt = Instant::now();
-    let xs = self.preprocess(&input)?;
+    let (xs, xs_mat) = self.preprocess(&input)?;
     info!("Pre-process took {:?}", pre_process_dt.elapsed());
 
     // Inference.
@@ -286,11 +342,16 @@ impl YoloOrtModel {
 
     // Post-process.
     let post_process_dt = Instant::now();
-    let _ = self.postprocess(&input, ys)?;
+    let yolo_output = self.postprocess(xs_mat, ys)?;
     info!("Post-process took {:?}", post_process_dt.elapsed());
 
+    // DEBUG:
+    opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
+    opencv::highgui::imshow("yeet", &yolo_output.output_img_mat)?;
+    opencv::highgui::wait_key(0)?;
+
     // Results.
-    Ok(())
+    Ok(yolo_output)
   }
 
   fn extract_labels_from_metadata(&mut self) -> Result<(), Error> {

@@ -111,6 +111,7 @@ dependencies = [
  "opencv",
  "ort",
  "prost",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "rustls 0.22.2",

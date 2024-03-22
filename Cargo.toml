@@ -47,6 +47,7 @@ chrono = "0.4.31"
 # ONNXRuntime: https://github.com/microsoft/onnxruntime
 # ROCm build instructions: https://onnxruntime.ai/docs/build/eps.html#amd-rocm
 ort = { version = "2.0.0-rc", features = ["rocm"] }
+rand = "0.8.5"
 
 
 [build-dependencies]

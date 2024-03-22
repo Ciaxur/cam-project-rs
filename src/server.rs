@@ -12,7 +12,7 @@ fn run_server() -> Result<(), Error> {
   // TODO: move into arg or something.
   let onnx_model_path = "./models/yolov8/yolov8n.onnx";
 
-  let yolo_model = YoloOrtModel::new(onnx_model_path.to_string())?;
+  let yolo_model = YoloOrtModel::new(onnx_model_path.to_string(), 0.75)?;
   info!("Version -> {}", yolo_model.version()?);
 
   // Load in the image and resize it to match expected input shape.

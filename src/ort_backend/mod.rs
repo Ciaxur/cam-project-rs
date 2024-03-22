@@ -2,20 +2,24 @@ use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer};
-use log::{error, info};
+use log::{debug, error, info};
 use ndarray::{Array, Axis, CowArray, IxDyn};
 use ort::{
   inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, SessionOutputs,
   Tensor, Value,
 };
+use rand::{thread_rng, Rng};
 use regex::Regex;
 
 pub struct YoloOrtModel {
   session: Session,
   labels: HashMap<u32, String>,
   input_shape: Vec<i64>,
+  color_palette: Vec<(i64, i64, i64)>,
+  prob_threshold: f64,
 }
 
+#[derive(Debug, Clone)]
 pub struct Bbox {
   pub x: f32,
   pub y: f32,
@@ -23,22 +27,32 @@ pub struct Bbox {
   pub h: f32,
 }
 
-struct YoloProbability {
+#[derive(Debug, Clone)]
+struct YoloPrediction {
   pub class_id: u32,
   pub label: String,
   pub confidence: f64,
+  pub color: image::Rgb<i64>,
 }
 
+#[derive(Debug, Clone)]
 struct YoloDetection {
   pub bbox: Bbox,
-  pub class_probability: Vec<YoloProbability>,
+  pub predictions: Vec<YoloPrediction>,
 
   // Resized to match the original input.
   pub resized_bbox: Bbox,
 }
 
+#[derive(Debug, Clone)]
+struct YoloOutput {
+  pub output_img: DynamicImage,
+  pub detections: Vec<YoloDetection>,
+}
+
+// TODO: docstrings
 impl YoloOrtModel {
-  pub fn new(onnx_model_path: String) -> Result<Self, Error> {
+  pub fn new(onnx_model_path: String, prob_threshold: f64) -> Result<Self, Error> {
     // Configure builder with performance configurations.
     let builder = Session::builder()?
       .with_parallel_execution(true)?
@@ -83,8 +97,24 @@ impl YoloOrtModel {
       session,
       labels: HashMap::new(),
       input_shape,
+      color_palette: Vec::new(),
+      prob_threshold,
     };
     model.extract_labels_from_metadata()?;
+
+    // Create a color palette.
+    let mut rng = thread_rng();
+    model.color_palette = model
+      .labels
+      .iter()
+      .map(|_| {
+        (
+          rng.gen_range(0..=255),
+          rng.gen_range(0..=255),
+          rng.gen_range(0..=255),
+        )
+      })
+      .collect();
 
     Ok(model)
   }
@@ -115,12 +145,12 @@ impl YoloOrtModel {
       .input_type
       .tensor_dimensions()
       .unwrap();
-    info!("Expected input dimensions -> {:?}", expected_input_shape);
+    debug!("Expected input dimensions -> {:?}", expected_input_shape);
 
     if let [num_imgs_dim, pixel_dim, height_dim, width_dim] = expected_input_shape[..4] {
       // Resize the inputs to match expected by the model.
       let xs = input.resize_exact(width_dim as u32, height_dim as u32, FilterType::CatmullRom);
-      info!("Input Image resized -> {:?}", xs.dimensions());
+      debug!("Input Image resized -> {:?}", xs.dimensions());
 
       let mut input = Array::zeros((
         num_imgs_dim as usize,
@@ -147,11 +177,7 @@ impl YoloOrtModel {
   }
 
   // TODO: optimize
-  fn postprocess(
-    &self,
-    xs0: &DynamicImage,
-    ys: SessionOutputs,
-  ) -> Result<Vec<YoloDetection>, Error> {
+  fn postprocess(&self, xs0: &DynamicImage, ys: SessionOutputs) -> Result<YoloOutput, Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
     let output = ys[output_name].extract_tensor::<f32>()?;
@@ -174,7 +200,8 @@ impl YoloOrtModel {
     let cxywh_offset: usize = 4;
 
     // Iterate over the batches, which in our case is capable of only one.
-    let mut result: Vec<YoloDetection> = Vec::new();
+    let mut detections: Vec<YoloDetection> = Vec::new();
+    let mut output_img = xs0.to_rgb8();
 
     for anchor in output.view().axis_iter(Axis(0)) {
       for prediction in anchor.axis_iter(Axis(1)) {
@@ -195,33 +222,55 @@ impl YoloOrtModel {
           h: bbox.h / ratio,
         };
 
+        let class_predictions: Vec<YoloPrediction> = prediction
+          .slice(ndarray::s![cxywh_offset..(cxywh_offset + total_classes)])
+          .into_iter()
+          .enumerate()
+          // Construct and filter predictions that meet confidence threshold.
+          .filter_map(|(i, v)| {
+            let id: u32 = i as u32;
+            let prob: f64 = *v as f64;
+
+            if prob >= self.prob_threshold {
+              let color = image::Rgb(self.color_palette[i].into());
+
+              // Add detections to input image.
+              // WIP:
+
+              Some(YoloPrediction {
+                class_id: id as u32,
+                label: self.labels.get(&id).unwrap().to_string(),
+                confidence: prob,
+                color,
+              })
+            } else {
+              None
+            }
+          })
+          .collect();
+
+        // Return early if no detections satisfied confidence threshold.
+        if class_predictions.is_empty() {
+          continue;
+        }
+
         let detection = YoloDetection {
           bbox,
           resized_bbox,
 
           // Remaining elements are probabilities for each class [4..84].
-          class_probability: prediction
-            .slice(ndarray::s![cxywh_offset..(cxywh_offset + total_classes)])
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| {
-              let id: u32 = i as u32;
-              let prob: f64 = *v as f64;
-
-              YoloProbability {
-                class_id: id as u32,
-                label: self.labels.get(&id).unwrap().to_string(),
-                confidence: prob,
-              }
-            })
-            .collect(),
+          predictions: class_predictions,
         };
 
-        result.push(detection);
+        debug!("Detection -> {:?}", detection);
+        detections.push(detection);
       }
     }
 
-    Ok(result)
+    Ok(YoloOutput {
+      detections,
+      output_img: DynamicImage::ImageRgb8(output_img),
+    })
   }
 
   pub fn run(&self, input: DynamicImage) -> Result<(), Error> {

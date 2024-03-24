@@ -21,9 +21,25 @@ use classifier_grpc_server::classifier::{
 // TODO: args.
 
 fn client_req_iter() -> impl Stream<Item = ClassifyImageRequest> {
-  tokio_stream::iter(1..usize::MAX).map(|i| ClassifyImageRequest {
-    device: format!("test[{i}] yo"),
-    ..Default::default()
+  // Load in the image and resize it to match expected input shape.
+  // NOTE: this matches what the client sends.
+  let img = opencv::imgcodecs::imread("video0.jpg", opencv::imgcodecs::IMREAD_COLOR).unwrap();
+  let mut _img_mat = img.clone();
+
+  let mut image_vec: Vector<u8> = Vector::new();
+  let encode_flags: Vector<i32> = Vector::new();
+  opencv::imgcodecs::imencode(".jpg", &_img_mat, &mut image_vec, &encode_flags).unwrap();
+
+  let client_req_img: Vec<u8> = image_vec.to_vec();
+  info!("Image loaded -> ({}, {})", img.cols(), img.rows());
+
+  // Yeet that iter!
+  tokio_stream::iter(1..usize::MAX).map(move |i| {
+    return ClassifyImageRequest {
+      device: format!("test[{i}] yo"),
+      image: client_req_img.clone(),
+      ..Default::default()
+    };
   })
 }
 
@@ -42,14 +58,23 @@ async fn run_test_client() -> Result<(), Error> {
   let mut response_stream = response.into_inner();
   while let Some(resp) = response_stream.next().await {
     let resp = resp?;
-    info!("Client received -> {:?}", resp);
+    info!(
+      "Client received -> {} | img = {}B",
+      resp.device,
+      resp.image.len()
+    );
   }
   Ok(())
 }
 
 async fn run_server() -> Result<(), Error> {
+  // Model config.
+  let onnx_model_path = "./models/yolov8/yolov8n.onnx".to_string();
+  let pred_thres = 0.75;
+
+  // Server config.
   let addr = "[::1]:9000".parse().unwrap();
-  let svc = ClassifierServer::default();
+  let svc = ClassifierServer::new(onnx_model_path, pred_thres)?;
 
   info!("Server listeining on {}", addr);
   Server::builder()

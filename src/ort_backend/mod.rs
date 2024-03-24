@@ -11,6 +11,7 @@ use ort::{
 use rand::{thread_rng, Rng};
 use regex::Regex;
 
+#[derive(Debug)]
 pub struct YoloOrtModel {
   session: Session,
   labels: HashMap<u32, String>,

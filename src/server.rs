@@ -63,6 +63,15 @@ async fn run_test_client() -> Result<(), Error> {
       resp.device,
       resp.image.len()
     );
+
+    // DEBUG: testing if image is right. and it is ;)
+    // let img_mat = opencv::imgcodecs::imdecode(
+    //   &Vector::<u8>::from(resp.image),
+    //   opencv::imgcodecs::IMREAD_ANYCOLOR,
+    // )?;
+    // opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
+    // opencv::highgui::imshow("yeet", &img_mat)?;
+    // opencv::highgui::wait_key(0)?;
   }
   Ok(())
 }
@@ -81,36 +90,6 @@ async fn run_server() -> Result<(), Error> {
     .add_service(ImageClassifierServer::new(svc))
     .serve(addr)
     .await?;
-  Ok(())
-}
-
-async fn run_model() -> Result<(), Error> {
-  // TODO: move into arg or something.
-  let onnx_model_path = "./models/yolov8/yolov8n.onnx";
-
-  let yolo_model = YoloOrtModel::new(onnx_model_path.to_string(), 0.75)?;
-  info!("Version -> {}", yolo_model.version()?);
-
-  // Load in the image and resize it to match expected input shape.
-  // NOTE: this matches what the client sends.
-  let img = opencv::imgcodecs::imread("video0.jpg", opencv::imgcodecs::IMREAD_COLOR)?;
-  let mut _img_mat = img.clone();
-
-  let mut image_vec: Vector<u8> = Vector::new();
-  let encode_flags: Vector<i32> = Vector::new();
-  opencv::imgcodecs::imencode(".jpg", &_img_mat, &mut image_vec, &encode_flags)?;
-
-  let client_req_img: Vec<u8> = image_vec.to_vec();
-
-  // client_req_img.
-  info!("Image loaded -> ({}, {})", img.cols(), img.rows());
-  let out = yolo_model.run(client_req_img)?;
-
-  // DEBUG:
-  opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
-  opencv::highgui::imshow("yeet", &out.img_mat)?;
-  opencv::highgui::wait_key(0)?;
-
   Ok(())
 }
 

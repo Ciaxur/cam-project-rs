@@ -1,5 +1,4 @@
 pub mod camera_api_client_worker;
-pub mod classifier_grpc;
 pub mod classifier_worker;
 pub mod interfaces;
 pub mod ndarray_util;

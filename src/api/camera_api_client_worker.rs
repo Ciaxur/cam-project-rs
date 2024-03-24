@@ -1,6 +1,6 @@
-use crate::api::classifier_grpc::classifier::ClassifyImageRequest;
 use crate::api::interfaces::CameraStreamResponse;
 use crate::api::{AdjustedCameraBuffer, CameraApi};
+use crate::classifier_grpc_client::classifier::ClassifyImageRequest;
 
 use log::{error, info, warn};
 use tokio::sync::mpsc;

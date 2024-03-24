@@ -60,8 +60,15 @@ pub struct YoloOutput {
   pub resized_img_mat: Mat,
 }
 
-// TODO: docstrings
 impl YoloOrtModel {
+  /// Creates a new Yolo ORT Model running under ROCm (if supported) or CPU provider.
+  ///
+  /// # Arguments
+  /// * onnx_model_path: Path to the .onnx yolo model.
+  /// * prob_threshold: Detection confidence threshold.
+  ///
+  /// # Returns
+  /// * New instance.
   pub fn new(onnx_model_path: String, prob_threshold: f64) -> Result<Self, Error> {
     // Configure builder with performance configurations.
     let builder = Session::builder()?
@@ -129,10 +136,18 @@ impl YoloOrtModel {
     Ok(model)
   }
 
+  /// Returns the label given a class id.
+  ///
+  /// # Arguments
+  /// * key: Class ID.
+  ///
+  /// # Returns
+  /// * An optional string representation of the class label.
   pub fn get_label(&self, key: &u32) -> Option<&String> {
     self.labels.get(key)
   }
 
+  /// Returns the model version.
   pub fn version(&self) -> Result<String, Error> {
     let version: String = self
       .session
@@ -149,8 +164,15 @@ impl YoloOrtModel {
     Ok(format!("{author} YOLO-{version}"))
   }
 
-  // TODO: optimize
-  // returns pre-processed yolo output structure.
+  /// Internal pre-process function that resized the given input image
+  /// to match the expected model inputs.
+  ///
+  /// # Returns
+  /// * YoloOutput structure populated with the resized vector and matrix image
+  ///   along with the original vector and matrix image.
+  ///
+  /// * The output structure will also contain the expected model input Array
+  ///   structure ready for inference.
   fn preprocess(&self, input: &Vec<u8>) -> Result<YoloOutput, Error> {
     let expected_input_shape = self.session.inputs[0]
       .input_type
@@ -226,7 +248,14 @@ impl YoloOrtModel {
     }
   }
 
-  // TODO: optimize
+  /// Internal post-process function that populates the detections from the given inference
+  /// session's output and draws bbox on both original and resized images into the
+  /// given output structure.
+  ///
+  /// # Arguments
+  /// * yolo_output: Mutable output structure to populate.
+  /// * ys: Inference session's output.
+  ///
   fn postprocess(&self, yolo_output: &mut YoloOutput, ys: SessionOutputs) -> Result<(), Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
@@ -340,6 +369,13 @@ impl YoloOrtModel {
     Ok(())
   }
 
+  /// Runs the model on the given input.
+  ///
+  /// # Arguments
+  /// * input: Input vector used to run inference on.
+  ///
+  /// # Returns
+  /// * Output structure results.
   pub fn run(&self, input: Vec<u8>) -> Result<YoloOutput, Error> {
     // Pre-process.
     let pre_process_dt = Instant::now();
@@ -362,6 +398,7 @@ impl YoloOrtModel {
     Ok(output.to_owned())
   }
 
+  /// Internal helper function that extracts the labels from the session's metadata.
   fn extract_labels_from_metadata(&mut self) -> Result<(), Error> {
     match self.session.metadata()?.custom("names")? {
       Some(labels_raw) => {
@@ -378,7 +415,13 @@ impl YoloOrtModel {
   }
 }
 
-// TODO: docstring.
+/// Helper function that draws a bbox on the given image.
+///
+/// # Arguments
+/// * img: Mutable image to apply the bbox on.
+/// * bbox: Bbox structure.
+/// * label: Label to draw on the bbox.
+/// * color: Color used for bbox and label.
 fn draw_bbox(img: &mut Mat, bbox: &Bbox, label: &str, color: Scalar) {
   // Add detections to input image.
   imgproc::rectangle(

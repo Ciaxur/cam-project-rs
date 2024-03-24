@@ -100,6 +100,7 @@ name = "apartment-cam-client"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "base64",
  "chrono",
  "clap",

@@ -1,3 +1,7 @@
+pub mod classifier {
+  tonic::include_proto!("classifier");
+}
+
 use anyhow::{Error, Result};
 use classifier::image_classifier_client::ImageClassifierClient;
 use classifier::{ClassifyImageRequest, ClassifyImageResponse};
@@ -6,10 +10,6 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{Duration, Instant};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Channel, Endpoint};
-
-pub mod classifier {
-  tonic::include_proto!("classifier");
-}
 
 #[derive(Debug)]
 pub struct ClassifierClient {

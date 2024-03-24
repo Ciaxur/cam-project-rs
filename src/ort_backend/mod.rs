@@ -2,8 +2,8 @@ use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};
 use log::{debug, info};
-use ndarray::{Array, ArrayBase, Axis, IxDyn};
-use opencv::core::{Mat, MatSize, MatTrait, MatTraitConst, Point, Rect, Scalar, Size, Vector};
+use ndarray::{Array, Axis, IxDyn};
+use opencv::core::{Mat, MatTraitConst, Point, Rect, Scalar, Size, Vector};
 use opencv::{imgcodecs, imgproc};
 use ort::{
   inputs, CPUExecutionProvider, ExecutionProvider, ROCmExecutionProvider, Session, SessionOutputs,
@@ -319,10 +319,6 @@ impl YoloOrtModel {
               let _color = self.color_palette[i];
               let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.);
               let label = self.labels.get(&id).unwrap();
-
-              // TEST:
-              // TODO: use the OG color image. use white if image is grayscale otherwise.
-              // let white_color = Scalar::new(255., 255., 255., 255.);
               draw_bbox(&mut yolo_output.img_mat, &adjusted_bbox, label, color);
               draw_bbox(&mut yolo_output.resized_img_mat, &bbox, label, color);
 

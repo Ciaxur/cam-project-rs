@@ -36,7 +36,7 @@ fn run_server() -> Result<(), Error> {
 
   // DEBUG:
   opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
-  opencv::highgui::imshow("yeet", &out.output_img_mat)?;
+  opencv::highgui::imshow("yeet", &out.img_mat)?;
   opencv::highgui::wait_key(0)?;
 
   Ok(())

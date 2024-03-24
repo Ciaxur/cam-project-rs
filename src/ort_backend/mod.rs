@@ -2,7 +2,7 @@ use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};
 use log::{debug, info};
-use ndarray::{Array, Axis, IxDyn};
+use ndarray::{Array, ArrayBase, Axis, IxDyn};
 use opencv::core::{Mat, MatSize, MatTrait, MatTraitConst, Point, Rect, Scalar, Size, Vector};
 use opencv::{imgcodecs, imgproc};
 use ort::{
@@ -41,16 +41,23 @@ pub struct YoloDetection {
   pub predictions: Vec<YoloPrediction>,
 
   // Resized to match the original input.
-  pub resized_bbox: Bbox,
+  pub adjusted_bbox: Bbox,
 }
 
 #[derive(Debug, Clone)]
 pub struct YoloOutput {
-  pub output_img: Vector<u8>,
-
-  // TODO: have both resized and original matricies of that have bboxes.
-  pub output_img_mat: Mat,
   pub detections: Vec<YoloDetection>,
+
+  // Input structure expected to run inference.
+  yolo_xs_input: Array<f32, IxDyn>,
+
+  // Original mutated image with bbox results.
+  pub img_vec: Vector<u8>,
+  pub img_mat: Mat,
+
+  // Resized mutated image with bbox results.
+  pub resized_img_vec: Vector<u8>,
+  pub resized_img_mat: Mat,
 }
 
 // TODO: docstrings
@@ -143,8 +150,8 @@ impl YoloOrtModel {
   }
 
   // TODO: optimize
-  // returns pre-processed image and encoded original image.
-  fn preprocess(&self, input: &Vec<u8>) -> Result<(Array<f32, IxDyn>, Mat), Error> {
+  // returns pre-processed yolo output structure.
+  fn preprocess(&self, input: &Vec<u8>) -> Result<YoloOutput, Error> {
     let expected_input_shape = self.session.inputs[0]
       .input_type
       .tensor_dimensions()
@@ -152,11 +159,11 @@ impl YoloOrtModel {
     debug!("Expected input dimensions -> {:?}", expected_input_shape);
 
     if let [num_imgs_dim, pixel_dim, height_dim, width_dim] = expected_input_shape[..4] {
+      // Convert input image into OpenCV Vector.
+      let ocv_input_vec = Vector::<u8>::from(input.to_vec());
+
       // Resize the inputs to match expected by the model.
-      let input_mat = imgcodecs::imdecode(
-        &Vector::<u8>::from(input.to_vec()),
-        imgcodecs::IMREAD_ANYCOLOR,
-      )?;
+      let input_mat = imgcodecs::imdecode(&ocv_input_vec, imgcodecs::IMREAD_ANYCOLOR)?;
       let mut xs_mat = Mat::default();
       imgproc::resize(
         &input_mat,
@@ -184,7 +191,7 @@ impl YoloOrtModel {
       let img = image::load_from_memory(&xs_vec.to_vec())?.to_rgb8();
       let (width, height) = img.dimensions();
 
-      let mut input = Array::zeros((
+      let mut yolo_xs_input = Array::zeros((
         num_imgs_dim as usize,
         pixel_dim as usize,
         height_dim as usize,
@@ -197,13 +204,20 @@ impl YoloOrtModel {
           let [r, g, b] = pixel.0;
 
           // Set all rgb values for each pixel.
-          input[[0, 0, y as usize, x as usize]] = (r as f32) / 255.;
-          input[[0, 1, y as usize, x as usize]] = (g as f32) / 255.;
-          input[[0, 2, y as usize, x as usize]] = (b as f32) / 255.;
+          yolo_xs_input[[0, 0, y as usize, x as usize]] = (r as f32) / 255.;
+          yolo_xs_input[[0, 1, y as usize, x as usize]] = (g as f32) / 255.;
+          yolo_xs_input[[0, 2, y as usize, x as usize]] = (b as f32) / 255.;
         }
       }
 
-      Ok((input, input_mat))
+      Ok(YoloOutput {
+        detections: Vec::new(),
+        yolo_xs_input,
+        img_vec: ocv_input_vec,
+        img_mat: input_mat,
+        resized_img_mat: xs_mat,
+        resized_img_vec: xs_vec,
+      })
     } else {
       Err(Error::msg(format!(
         "Expected model inputs to contain 4 dimensions but got -> {:?}",
@@ -213,8 +227,7 @@ impl YoloOrtModel {
   }
 
   // TODO: optimize
-  // xs0 -> original encoded image.
-  fn postprocess(&self, xs0: Mat, ys: SessionOutputs) -> Result<YoloOutput, Error> {
+  fn postprocess(&self, yolo_output: &mut YoloOutput, ys: SessionOutputs) -> Result<(), Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
     let output = ys[output_name].extract_tensor::<f32>()?;
@@ -222,6 +235,7 @@ impl YoloOrtModel {
     let in_height = self.input_shape[2];
 
     // Original input resolution.
+    let xs0 = &yolo_output.img_mat;
     let og_width = xs0.cols();
     let og_height = xs0.rows();
     let w_ratio: f32 = og_width as f32 / in_width as f32;
@@ -238,32 +252,29 @@ impl YoloOrtModel {
     let cxywh_offset: usize = 4;
 
     // Iterate over the batches, which in our case is capable of only one.
-    let mut detections: Vec<YoloDetection> = Vec::new();
-    let mut img_mat = xs0.clone();
-
     for anchor in output.view().axis_iter(Axis(0)) {
       for prediction in anchor.axis_iter(Axis(1)) {
         // First 4 elements are the bounding box coordinates (x, y, width and height).
         let bbox = prediction.slice(ndarray::s![0..cxywh_offset]);
-        // TODO: do we need to center x/y here like the resized one?
+        let (x, y, w, h) = (bbox[0], bbox[1], bbox[2], bbox[3]);
+
+        // Center the bbox on the detected object.
         let bbox = Bbox {
-          x: bbox[0],
-          y: bbox[1],
-          w: bbox[2],
-          h: bbox[3],
+          x: x - (w / 2.0),
+          y: y - (h / 2.0),
+          w,
+          h,
         };
 
         // Adjust bounding box to match the original input.
         // We can do so by adjusting the ratio.
-        // Then centering x/y since they point at the detected image center.
-        // TODO: BUG: fix this. this is wrong!
         let rw = bbox.w * w_ratio;
-        let rh = bbox.y * h_ratio;
-        let resized_bbox = Bbox {
-          x: (bbox.x * w_ratio) - (rw / 2.),
-          y: (bbox.y * h_ratio) - (rh / 4.),
+        let rh = bbox.h * h_ratio;
+        let adjusted_bbox = Bbox {
+          x: bbox.x * w_ratio,
+          y: bbox.y * h_ratio,
           w: rw,
-          h: rh / 2.,
+          h: rh,
         };
 
         let class_predictions: Vec<YoloPrediction> = prediction
@@ -278,47 +289,17 @@ impl YoloOrtModel {
             if prob >= self.prob_threshold {
               let _color = self.color_palette[i];
               let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.);
-              let label = self.labels.get(&id).unwrap().to_string();
-
-              // Add detections to input image.
-              imgproc::rectangle(
-                &mut img_mat,
-                Rect::new(
-                  resized_bbox.x as i32,
-                  resized_bbox.y as i32,
-                  resized_bbox.w as i32,
-                  resized_bbox.h as i32,
-                ),
-                color,
-                1,
-                imgproc::LINE_8,
-                0,
-              )
-              .expect("draw detection bbox");
-
-              // Add label to the image.
-              let text_origin_x = resized_bbox.x;
-              let text_origin_y = resized_bbox.y;
+              let label = self.labels.get(&id).unwrap();
 
               // TEST:
               // TODO: use the OG color image. use white if image is grayscale otherwise.
-              let white_color = Scalar::new(255., 255., 255., 255.);
-              imgproc::put_text(
-                &mut img_mat,
-                label.as_str(),
-                Point::new(text_origin_x as i32, text_origin_y as i32),
-                imgproc::FONT_HERSHEY_SIMPLEX,
-                0.5,
-                white_color,
-                1,
-                imgproc::LINE_AA,
-                false,
-              )
-              .expect("draw text label");
+              // let white_color = Scalar::new(255., 255., 255., 255.);
+              draw_bbox(&mut yolo_output.img_mat, &adjusted_bbox, label, color);
+              draw_bbox(&mut yolo_output.resized_img_mat, &bbox, label, color);
 
               Some(YoloPrediction {
                 class_id: id as u32,
-                label,
+                label: label.to_string(),
                 confidence: prob,
                 color,
               })
@@ -335,46 +316,50 @@ impl YoloOrtModel {
 
         let detection = YoloDetection {
           bbox,
-          resized_bbox,
+          adjusted_bbox,
 
           // Remaining elements are probabilities for each class [4..84].
           predictions: class_predictions,
         };
 
         debug!("Detection -> {:?}", detection);
-        detections.push(detection);
+        yolo_output.detections.push(detection);
       }
     }
 
-    let mut _img_buf = Vector::new();
+    // Encode original and resized image results.
     let imwrite_flags: Vector<i32> = Vector::new();
-    opencv::imgcodecs::imencode(".jpeg", &img_mat, &mut _img_buf, &imwrite_flags).expect("shit");
+    opencv::imgcodecs::imencode(
+      ".jpeg",
+      &yolo_output.img_mat,
+      &mut yolo_output.img_vec,
+      &imwrite_flags,
+    )
+    .expect("encode output image");
 
-    Ok(YoloOutput {
-      detections,
-      output_img: _img_buf,
-      output_img_mat: img_mat,
-    })
+    Ok(())
   }
 
   pub fn run(&self, input: Vec<u8>) -> Result<YoloOutput, Error> {
     // Pre-process.
     let pre_process_dt = Instant::now();
-    let (xs, xs_mat) = self.preprocess(&input)?;
+    let mut output = self.preprocess(&input)?;
     info!("Pre-process took {:?}", pre_process_dt.elapsed());
 
     // Inference.
     let inference_dt = Instant::now();
-    let ys = self.session.run(inputs!["images" => xs.view()]?)?;
+    let ys = self
+      .session
+      .run(inputs!["images" => output.yolo_xs_input.view()]?)?;
     info!("Inference took {:?}", inference_dt.elapsed());
 
     // Post-process.
     let post_process_dt = Instant::now();
-    let yolo_output = self.postprocess(xs_mat, ys)?;
+    self.postprocess(&mut output, ys)?;
     info!("Post-process took {:?}", post_process_dt.elapsed());
 
     // Results.
-    Ok(yolo_output)
+    Ok(output.to_owned())
   }
 
   fn extract_labels_from_metadata(&mut self) -> Result<(), Error> {
@@ -391,4 +376,35 @@ impl YoloOrtModel {
       None => Err(Error::msg("Failed to extract labels from model metadata")),
     }
   }
+}
+
+// TODO: docstring.
+fn draw_bbox(img: &mut Mat, bbox: &Bbox, label: &str, color: Scalar) {
+  // Add detections to input image.
+  imgproc::rectangle(
+    img,
+    Rect::new(bbox.x as i32, bbox.y as i32, bbox.w as i32, bbox.h as i32),
+    color,
+    1,
+    imgproc::LINE_8,
+    0,
+  )
+  .expect("draw detection bbox");
+
+  // Add label to the image.
+  let text_origin_x = bbox.x;
+  let text_origin_y = bbox.y;
+
+  imgproc::put_text(
+    img,
+    label,
+    Point::new(text_origin_x as i32, text_origin_y as i32),
+    imgproc::FONT_HERSHEY_SIMPLEX,
+    0.5,
+    color,
+    1,
+    imgproc::LINE_AA,
+    false,
+  )
+  .expect("draw text label");
 }

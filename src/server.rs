@@ -1,88 +1,40 @@
 pub mod classifier_grpc_server;
 pub mod ort_backend;
 
-use std::{process::exit, time::Duration};
-
 use anyhow::{Error, Result};
+use clap::Parser;
 use classifier_grpc_server::classifier::image_classifier_server::ImageClassifierServer;
 use classifier_grpc_server::ClassifierServer;
 use env_logger::Env;
 use log::{error, info};
-use opencv::core::{MatTraitConst, Vector};
-use tokio::{select, time::sleep};
-use tokio_stream::{Stream, StreamExt};
+use std::process::exit;
+use tokio::select;
 use tonic::transport::Server;
 
-// Client
-use classifier_grpc_server::classifier::{
-  image_classifier_client::ImageClassifierClient, ClassifyImageRequest,
-};
-// TODO: args.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+  /// Server port to listen on.
+  #[arg(short, long, required = true)]
+  port: u16,
 
-fn client_req_iter() -> impl Stream<Item = ClassifyImageRequest> {
-  // Load in the image and resize it to match expected input shape.
-  // NOTE: this matches what the client sends.
-  let img = opencv::imgcodecs::imread("video0.jpg", opencv::imgcodecs::IMREAD_COLOR).unwrap();
-  let mut _img_mat = img.clone();
+  /// Prediction percentage threshold.
+  #[arg(short, long, default_value_t = 0.75)]
+  confidence: f64,
 
-  let mut image_vec: Vector<u8> = Vector::new();
-  let encode_flags: Vector<i32> = Vector::new();
-  opencv::imgcodecs::imencode(".jpg", &_img_mat, &mut image_vec, &encode_flags).unwrap();
-
-  let client_req_img: Vec<u8> = image_vec.to_vec();
-  info!("Image loaded -> ({}, {})", img.cols(), img.rows());
-
-  // Yeet that iter!
-  tokio_stream::iter(1..usize::MAX).map(move |i| {
-    return ClassifyImageRequest {
-      device: format!("test[{i}] yo"),
-      image: client_req_img.clone(),
-      ..Default::default()
-    };
-  })
+  /// Path to ONNX YOLO Model.
+  #[arg(short, long, required = true)]
+  model_filepath: String,
 }
 
-async fn run_test_client() -> Result<(), Error> {
-  // Arbitrarily wait for server to start.
-  sleep(Duration::from_secs(1)).await;
-  info!("Starting client");
-
-  // Alright let's start the fun!
-  let mut client = ImageClassifierClient::connect("http://[::1]:9000").await?;
-  let stream_in = client_req_iter()
-    .take(10)
-    .throttle(Duration::from_millis(250));
-  let response = client.classify_image(stream_in).await?;
-
-  let mut response_stream = response.into_inner();
-  while let Some(resp) = response_stream.next().await {
-    let resp = resp?;
-    info!(
-      "Client received -> {} | img = {}B",
-      resp.device,
-      resp.image.len()
-    );
-
-    // DEBUG: testing if image is right. and it is ;)
-    // let img_mat = opencv::imgcodecs::imdecode(
-    //   &Vector::<u8>::from(resp.image),
-    //   opencv::imgcodecs::IMREAD_ANYCOLOR,
-    // )?;
-    // opencv::highgui::named_window("yeet", opencv::highgui::WINDOW_AUTOSIZE)?;
-    // opencv::highgui::imshow("yeet", &img_mat)?;
-    // opencv::highgui::wait_key(0)?;
-  }
-  Ok(())
-}
-
+/// Helper function which starts the gRPC server.
 async fn run_server() -> Result<(), Error> {
-  // Model config.
-  let onnx_model_path = "./models/yolov8/yolov8n.onnx".to_string();
-  let pred_thres = 0.75;
+  // Grab passed in cli args, forwarding them to the main execution logic.
+  let args = Args::parse();
 
   // Server config.
-  let addr = "[::1]:9000".parse().unwrap();
-  let svc = ClassifierServer::new(onnx_model_path, pred_thres)?;
+  let addr = format!("[::1]:{}", args.port).parse().unwrap();
+  let svc = ClassifierServer::new(args.model_filepath, args.confidence)?;
 
   info!("Server listeining on {}", addr);
   Server::builder()
@@ -103,15 +55,6 @@ async fn main() {
         Ok(_) => exit(0),
         Err(err) => {
           error!("Server failed to start: {err}");
-          exit(1)
-        }
-      }
-    },
-    ret = run_test_client() => {
-      match ret {
-        Ok(_) => exit(0),
-        Err(err) => {
-          error!("Client failed to start: {err}");
           exit(1)
         }
       }

@@ -22,7 +22,7 @@ pub struct ClassifierServer {
   model: Arc<YoloOrtModel>,
 
   // Storage manager instances used to locally store detected images.
-  storage_manager: Arc<StorageManager>,
+  _storage_manager: Arc<StorageManager>,
   storage_manager_tx: Arc<Sender<StorageManagerFile>>,
 }
 
@@ -43,7 +43,7 @@ impl ClassifierServer {
 
     Ok(Self {
       model: Arc::new(YoloOrtModel::new(onnx_model_path, prob_threshold)?),
-      storage_manager: Arc::new(storage_manager),
+      _storage_manager: Arc::new(storage_manager),
       storage_manager_tx: Arc::new(storage_manager_tx),
     })
   }

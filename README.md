@@ -3,24 +3,6 @@
 Camera object detection client and server project. Server provides an API for running
 the object detection model and the client handles providing the images to be used as input.
 
-# Benchmarks
-
-## YoloV8
-
-`Git`: https://github.com/ultralytics/assets
-`CPU`: 0.2s | 130% CPU
-`Intel GPU`: 2s | 100% CPU | ?% GPU
-
-## yolos-tiny
-
-Git: https://huggingface.co/hustvl/yolos-tiny
-`Intel GPU`: 0.8s | 200% CPU | ?% GPU
-
-## resnet-50
-
-Git: https://huggingface.co/microsoft/resnet-50
-`Intel GPU`: 0.1s | 154% CPU | ?% GPU
-
 # Usage
 
 Both client & server require OpenCV.
@@ -46,21 +28,15 @@ The server is a gRPC server which provides an endpoint for which to run a model 
 images within an open stream.
 
 ```sh
-# Create a python virtual environment
-$ python -m venv opencv-venv
-$ source ./opencv-venv/bin/activate
-
-# Install modules. Including intel extension url for dg2 GPU support.
-$ python \
-  -m pip install \
-  -r ./requirements.txt \
-  --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
+# Build the server
+$ cargo build --bin server --release
 
 # Run the server
-$ python ./src/server.py \
-  --threshold=0.7 \
-  --image_store_dir=/path/to/matched/images/store \
-  --port 6969
+$ aptcam_server \
+  -m models/yolov8/yolov8n.onnx \
+  --port 6969 \
+  --confidence=0.80 \
+  --image-store-dir=/path/to/matched/images/store \
 ```
 
 # Models

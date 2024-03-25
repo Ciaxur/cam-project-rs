@@ -1,5 +1,6 @@
 pub mod classifier_grpc_server;
 pub mod ort_backend;
+pub mod utils;
 
 use anyhow::{Error, Result};
 use clap::Parser;
@@ -25,6 +26,10 @@ pub struct Args {
   /// Path to ONNX YOLO Model.
   #[arg(short, long, required = true)]
   model_filepath: String,
+
+  /// Path to storage directory for which to store detected images in.
+  #[arg(short, long, required = true)]
+  image_store_dir: String,
 }
 
 /// Helper function which starts the gRPC server.
@@ -34,7 +39,7 @@ async fn run_server() -> Result<(), Error> {
 
   // Server config.
   let addr = format!("[::1]:{}", args.port).parse().unwrap();
-  let svc = ClassifierServer::new(args.model_filepath, args.confidence)?;
+  let svc = ClassifierServer::new(args.model_filepath, args.confidence, args.image_store_dir)?;
 
   info!("Server listeining on {}", addr);
   Server::builder()

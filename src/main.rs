@@ -1,4 +1,4 @@
-use apartment_cam_client::run;
+use apartment_cam::run;
 use env_logger::Env;
 use log::error;
 use std::process::exit;

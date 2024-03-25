@@ -2,6 +2,7 @@ pub mod api;
 pub mod camera;
 pub mod classifier_grpc_client;
 pub mod config;
+pub mod utils;
 
 use anyhow::Result;
 use api::camera_api_client_worker::start_camera_api_client;

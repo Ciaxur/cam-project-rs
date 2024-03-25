@@ -4,12 +4,14 @@ pub mod classifier {
 
 use crate::ort_backend::YoloOrtModel;
 
+use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
 use anyhow::{Error, Result};
 use classifier::image_classifier_server::ImageClassifier;
 use classifier::{ClassifyImageRequest, ClassifyImageResponse};
-use log::{debug, info};
+use log::{debug, error, info};
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 
@@ -18,12 +20,31 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<ClassifyImageResponse, St
 #[derive(Debug)]
 pub struct ClassifierServer {
   model: Arc<YoloOrtModel>,
+
+  // Storage manager instances used to locally store detected images.
+  storage_manager: Arc<StorageManager>,
+  storage_manager_tx: Arc<Sender<StorageManagerFile>>,
 }
 
 impl ClassifierServer {
-  pub fn new(onnx_model_path: String, prob_threshold: f64) -> Result<Self, Error> {
+  /// Creates a new ClassifierServer instance.
+  ///
+  /// # Arguments
+  /// * onnx_model_path: Path to the ONNX Yolo model.
+  /// * prob_threshold: Confidence threshold for which to filter on results.
+  /// * image_storage_path: Storage path for which to store matched images in.
+  pub fn new(
+    onnx_model_path: String,
+    prob_threshold: f64,
+    image_storage_path: String,
+  ) -> Result<Self, Error> {
+    let mut storage_manager = StorageManager::new(image_storage_path, 2048);
+    let storage_manager_tx: Sender<StorageManagerFile> = storage_manager.start();
+
     Ok(Self {
       model: Arc::new(YoloOrtModel::new(onnx_model_path, prob_threshold)?),
+      storage_manager: Arc::new(storage_manager),
+      storage_manager_tx: Arc::new(storage_manager_tx),
     })
   }
 }
@@ -46,6 +67,7 @@ impl ImageClassifier for ClassifierServer {
     // See the following for more info:
     // - https://stackoverflow.com/questions/72403669/tokio-tonic-how-to-fix-this-error-self-has-lifetime-life0-but-it-needs
     let model = self.model.clone();
+    let storage_manager = self.storage_manager_tx.clone();
     let output_stream = async_stream::try_stream! {
       while let Some(req) = req_stream.next().await {
         let req = req?;
@@ -78,6 +100,17 @@ impl ImageClassifier for ClassifierServer {
               }
 
               info!("Detection: labels={:?} | ids={:?} | confidence={:?}", resp.labels, resp.matches, resp.match_scores);
+
+              // Add to storage manager to store.
+              let status = storage_manager.send(StorageManagerFile{
+                data: resp.image.clone(),
+                device_name: resp.device.clone(),
+                ext: ".jpeg".to_string(),
+              }).await;
+
+              if let Err(err) = status {
+                error!("Failed to send {} device image for local storage -> {}", resp.device, err);
+              }
             }
             resp
           }

@@ -9,7 +9,6 @@ use classifier_grpc_server::ClassifierServer;
 use env_logger::Env;
 use log::{error, info};
 use opencv::core::{MatTraitConst, Vector};
-use ort_backend::YoloOrtModel;
 use tokio::{select, time::sleep};
 use tokio_stream::{Stream, StreamExt};
 use tonic::transport::Server;

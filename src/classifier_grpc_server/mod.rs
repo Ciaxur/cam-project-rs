@@ -7,7 +7,7 @@ use crate::ort_backend::YoloOrtModel;
 use anyhow::{Error, Result};
 use classifier::image_classifier_server::ImageClassifier;
 use classifier::{ClassifyImageRequest, ClassifyImageResponse};
-use log::info;
+use log::{debug, info};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::{Stream, StreamExt};
@@ -50,17 +50,36 @@ impl ImageClassifier for ClassifierServer {
       while let Some(req) = req_stream.next().await {
         let req = req?;
 
-        // WIP: continue porting over...
-        info!("Yoinked request -> {} | img = {}B", req.device, req.image.len());
+        debug!("Yoinked request -> {} | img = {}B", req.device, req.image.len());
 
         // Run inference on the input image.
         yield match model.run(req.image) {
           Ok(output) => {
-            ClassifyImageResponse{
-              device: format!("server response to -> {}", req.device),
-              image: output.resized_img_vec.to_vec(),
+            // By default, no detections, returns an empty image to save on bandwidth.
+            let mut resp = ClassifyImageResponse{
+              device: req.device,
               ..Default::default()
+            };
+
+            if output.detections.len() > 0 {
+              for detection in output.detections {
+                for prediction in detection.predictions {
+                  resp.matches.push(prediction.class_id as f32);
+                  resp.match_scores.push(prediction.confidence as f32);
+                  resp.labels.push(prediction.label);
+                }
+              }
+
+              // Include the mutated image with the higher resolution.
+              if output.resized_img_vec.len() > output.img_vec.len() {
+                resp.image = output.resized_img_vec.to_vec();
+              } else {
+                resp.image = output.img_vec.to_vec();
+              }
+
+              info!("Detection: labels={:?} | ids={:?} | confidence={:?}", resp.labels, resp.matches, resp.match_scores);
             }
+            resp
           }
           Err(err) => Err(
             Status::unknown(

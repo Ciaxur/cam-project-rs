@@ -102,8 +102,7 @@ impl YoloOrtModel {
         }
       }
     };
-
-    let session = builder.with_model_from_file(onnx_model_path)?;
+    let session = builder.commit_from_file(onnx_model_path)?;
     let input_shape = session.inputs[0]
       .input_type
       .tensor_dimensions()
@@ -260,7 +259,7 @@ impl YoloOrtModel {
   fn postprocess(&self, yolo_output: &mut YoloOutput, ys: SessionOutputs) -> Result<(), Error> {
     // Extract results.
     let output_name = self.session.outputs[0].name.clone();
-    let output = ys[output_name].extract_tensor::<f32>()?;
+    let output = ys[output_name].try_extract_tensor::<f32>()?;
     let in_width = self.input_shape[3];
     let in_height = self.input_shape[2];
 

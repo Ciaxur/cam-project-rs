@@ -43,11 +43,11 @@ async-stream = "0.3.5"
 chrono = "0.4.31"
 
 # ORT Documentation: https://ort.pyke.io/introduction
-# Rust Documentation: https://docs.rs/ort/2.0.0-rc.0/ort/index.html
+# Rust Documentation: https://docs.rs/ort/2.0.0-rc.1/ort/index.html
 # GitHub: https://github.com/pykeio/ort
 # ONNXRuntime: https://github.com/microsoft/onnxruntime
 # ROCm build instructions: https://onnxruntime.ai/docs/build/eps.html#amd-rocm
-ort = { version = "2.0.0-rc", features = ["rocm"] }
+ort = { version = "2.0.0-rc.1", features = ["rocm", "ndarray"] }
 rand = "0.8.5"
 
 

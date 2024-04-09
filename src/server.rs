@@ -49,7 +49,7 @@ async fn run_server() -> Result<(), Error> {
   Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
   // Initialize global logger. Logger value can be set via the 'RUST_LOG' environment variable.
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();

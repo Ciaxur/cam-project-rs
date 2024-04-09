@@ -2,8 +2,9 @@ use crate::api::interfaces::CameraStreamResponse;
 use crate::api::{AdjustedCameraBuffer, CameraApi};
 use crate::classifier_grpc_client::classifier::ClassifyImageRequest;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 /// Starts the Camera API client within two tokio tasks (consumer, producer) for which
 /// consumes images from an open stream, from the given api endpoint, writing those images
@@ -54,6 +55,10 @@ pub async fn start_camera_api_client(
     warn!("CameraAPI Client: Terminating producer");
   });
 
+  // Keep track of consumer statistics.
+  let mut consumption_per_second = 0;
+  let mut last_consuption = Instant::now();
+
   // CameraAPI Consumer.
   let consumer_task = tokio::task::spawn(async move {
     info!("CameraAPI Client: Started image stream consumer");
@@ -64,10 +69,22 @@ pub async fn start_camera_api_client(
       for (image, adjusted_image) in buffer.to_owned() {
         if let Some(a_img_buffs) = adjusted_image {
           for a_img in a_img_buffs {
-            info!(
+            debug!(
               "CameraAPI Client: Consumed adjusted camera buffer {}[{}]",
               a_img.cam_name, a_img.cam_ip,
             );
+
+            // Track consumption statistics.
+            consumption_per_second += 1;
+            if last_consuption.elapsed().as_secs_f64() >= 1.0 {
+              info!(
+                "CameraAPI Client: Consumed {}/{:2}s",
+                consumption_per_second,
+                last_consuption.elapsed().as_secs_f64()
+              );
+              last_consuption = Instant::now();
+              consumption_per_second = 0;
+            }
 
             let send_status = classify_request_tx.send(ClassifyImageRequest {
               image: a_img.image_buff,

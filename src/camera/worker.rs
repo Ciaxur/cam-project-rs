@@ -94,7 +94,7 @@ pub async fn start_local_video_worker(
           let image_vec_size_kb: f64 = math::round::floor(image_vec.len() as f64 / 1024.0, 2);
           // Info status logs.
           let image_size = image_mat.size().unwrap_or_default();
-          info!(
+          debug!(
             "VideoDeviceIngestor: Image Encoded -> ext={} | is_grayscale={} | vec={}KB | size{}x{}",
             video_enc_copy.image_ext,
             video_enc_copy.grayscale,

@@ -453,7 +453,10 @@ impl CameraApi {
       // Check statistics every second.
       if stat_check_time.elapsed().as_millis() >= 1000 {
         let total_kb_sent = total_bytes_sent / 1024;
-        info!("CameraAPI: Produced ~{}KB/s", total_kb_sent);
+        info!(
+          "CameraAPI: Produced ~{}KB/s @{}FPS",
+          total_kb_sent, self.target_fps
+        );
 
         // Reset.
         stat_check_time = Instant::now();
@@ -474,7 +477,7 @@ impl CameraApi {
 
       // If we reach here, then target FPS has been met, proceed to produce image for consumers.
       start_time = Instant::now();
-      info!(
+      debug!(
         "ClientAPI: FPS target met -> elapsed_seconds={}s | fps_now={} | target_elapsed_seconds={}s | target_fps={}",
         elapsed_time.as_secs_f64(),
         fps,

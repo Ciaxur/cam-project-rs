@@ -78,7 +78,7 @@ pub async fn start_camera_api_client(
             consumption_per_second += 1;
             if last_consuption.elapsed().as_secs_f64() >= 1.0 {
               info!(
-                "CameraAPI Client: Consumed {}/{:2}s",
+                "CameraAPI Client: Consumed {}/{:.2}s",
                 consumption_per_second,
                 last_consuption.elapsed().as_secs_f64()
               );

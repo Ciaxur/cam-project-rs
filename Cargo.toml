@@ -36,7 +36,7 @@ ndarray = "0.15.6"
 libmath = "0.2.1"
 
 # gRPC
-tonic = "0.10.2"
+tonic = "0.11.0"
 prost = "0.12.3"
 tokio-stream = "0.1.14"
 async-stream = "0.3.5"

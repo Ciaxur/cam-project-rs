@@ -43,6 +43,7 @@ async fn run_server() -> Result<(), Error> {
 
   info!("Server listeining on {}", addr);
   Server::builder()
+    .concurrency_limit_per_connection(32)
     .add_service(ImageClassifierServer::new(svc))
     .serve(addr)
     .await?;

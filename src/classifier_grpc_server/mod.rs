@@ -12,6 +12,7 @@ use log::{debug, error, info};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tokio::time::Instant;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 
@@ -71,7 +72,7 @@ impl ImageClassifier for ClassifierServer {
     let output_stream = async_stream::try_stream! {
       while let Some(req) = req_stream.next().await {
         let req = req?;
-
+        let req_handler_dt = Instant::now();
         debug!("Yoinked request -> {} | img = {}B", req.device, req.image.len());
 
         // Run inference on the input image.
@@ -112,6 +113,8 @@ impl ImageClassifier for ClassifierServer {
                 error!("Failed to send {} device image for local storage -> {}", resp.device, err);
               }
             }
+
+            info!("Request handler took {:?}s to complete", req_handler_dt.elapsed());
             resp
           }
           Err(err) => Err(

@@ -17,7 +17,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::Sender;
 use tokio::time::{Duration, Instant};
 
-use crate::config::ConfigCameraAPI;
+use crate::config::client::ConfigCameraAPI;
 
 /// Helper function for loading in certificates for mTLS.
 ///

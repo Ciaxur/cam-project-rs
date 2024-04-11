@@ -12,7 +12,7 @@ Both client & server require OpenCV.
 ## Client
 
 Client consumes images from local camera device and from an HTTP endpoint.
-The client uses a `json config`. See [config_example](./config_example.json) for more info.
+The client uses a `json config`. See [config_example](./config_client_example.json) for more info.
 
 ```sh
 # Build the client.
@@ -26,6 +26,8 @@ $ aptcam_client -c config.json
 
 The server is a gRPC server which provides an endpoint for which to run a model on supplied
 images within an open stream.
+The server uses a `json config`. See [config_example](./config_server_example.json) for more info.
+
 
 ```sh
 # Build the server
@@ -33,10 +35,8 @@ $ cargo build --bin server --release
 
 # Run the server
 $ aptcam_server \
-  -m models/yolov8/yolov8n.onnx \
   --port 6969 \
-  --confidence=0.80 \
-  --image-store-dir=/path/to/matched/images/store \
+  -c config.json
 ```
 
 # Models

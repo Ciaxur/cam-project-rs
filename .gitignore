@@ -4,7 +4,9 @@
 certs
 .vscode
 config.json
+client_config.json
+server_config.json
 onnxruntime-workspace
 
 # Added by cargo
-/target
+target

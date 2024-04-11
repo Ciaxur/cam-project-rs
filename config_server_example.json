@@ -1,0 +1,8 @@
+{
+  "confidence": 0.75,
+  "model_filepath": "./models/yolov8/yolov8n.onnx",
+  "image_store_dir": "path/to/store/dir",
+  "accepted_match_classes": [
+    0
+  ]
+}

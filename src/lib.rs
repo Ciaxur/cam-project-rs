@@ -16,7 +16,7 @@ use log::{debug, info};
 use pb::classifier::{ClassifyImageRequest, ClassifyImageResponse};
 use tokio::sync::mpsc;
 
-use crate::config::Config;
+use crate::config::client::ClientConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -31,7 +31,7 @@ pub async fn run() -> Result<(), String> {
   // Grab passed in cli args, forwarding them to the main execution logic.
   let args = Args::parse();
   info!("Using configuration file from -> {}", args.config);
-  let config = Config::parse(args.config.clone())
+  let config = ClientConfig::parse(args.config.clone())
     .map_err(|err| format!("Configuration parse of '{}' failed: {}", args.config, err))?;
   debug!("Configuration loaded -> {config:?}");
 

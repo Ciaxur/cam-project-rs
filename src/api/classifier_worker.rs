@@ -3,7 +3,7 @@ use crate::classifier_grpc_client::ClassifierClient;
 use crate::pb::classifier::{ClassifyImageRequest, ClassifyImageResponse};
 use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
 
-use crate::config::{Config, ConfigCameraAPI};
+use crate::config::client::{ClientConfig, ConfigCameraAPI};
 use anyhow::{Error, Result};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ use tokio::time::{Duration, Instant};
 /// * Tokio task handler.
 pub async fn start_classifier_client(
   client_api: &CameraApi,
-  config: &Config,
+  config: &ClientConfig,
   camera_api_config: &ConfigCameraAPI,
   classify_response_tx: mpsc::Sender<ClassifyImageResponse>,
   mut classify_response_rx: mpsc::Receiver<ClassifyImageResponse>,

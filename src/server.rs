@@ -4,6 +4,7 @@ pub mod pb;
 pub mod utils;
 
 use anyhow::{Error, Result};
+use apartment_cam::config::server::ServerConfig;
 use clap::Parser;
 use classifier_grpc_server::ClassifierServer;
 use env_logger::Env;
@@ -20,17 +21,10 @@ pub struct Args {
   #[arg(short, long, required = true)]
   port: u16,
 
-  /// Prediction percentage threshold.
-  #[arg(short, long, default_value_t = 0.75)]
-  confidence: f64,
-
-  /// Path to ONNX YOLO Model.
+  /// File path to configuration json file.
+  /// See config/mod.rs for more info.
   #[arg(short, long, required = true)]
-  model_filepath: String,
-
-  /// Path to storage directory for which to store detected images in.
-  #[arg(short, long, required = true)]
-  image_store_dir: String,
+  config: String,
 }
 
 /// Helper function which starts the gRPC server.
@@ -38,11 +32,20 @@ async fn run_server() -> Result<(), Error> {
   // Grab passed in cli args, forwarding them to the main execution logic.
   let args = Args::parse();
 
-  // Server config.
-  let addr = format!("[::1]:{}", args.port).parse().unwrap();
-  let svc = ClassifierServer::new(args.model_filepath, args.confidence, args.image_store_dir)?;
+  // Load server config.
+  info!("Using configuration file from -> {}", args.config);
+  let config = ServerConfig::parse(args.config.clone())?;
 
-  info!("Server listeining on {}", addr);
+  // Server config.
+  let addr = format!("0.0.0.0:{}", args.port).parse().unwrap();
+  let svc = ClassifierServer::new(
+    config.model_filepath,
+    config.confidence,
+    config.image_store_dir,
+    config.accepted_match_classes,
+  )?;
+
+  info!("Server listening on {}", addr);
   Server::builder()
     .concurrency_limit_per_connection(32)
     .add_service(ImageClassifierServer::new(svc))

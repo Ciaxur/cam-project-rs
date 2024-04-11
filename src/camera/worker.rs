@@ -1,7 +1,7 @@
 use crate::api::interfaces::{CameraBaseData, CameraStreamResponse};
 use crate::api::AdjustedCameraBuffer;
 use crate::camera;
-use crate::config::ConfigLocalVideo;
+use crate::config::client::ConfigLocalVideo;
 
 use log::{debug, error, info};
 use opencv::imgcodecs::ImwriteFlags;

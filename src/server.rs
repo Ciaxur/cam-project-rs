@@ -1,13 +1,14 @@
 pub mod classifier_grpc_server;
 pub mod ort_backend;
+pub mod pb;
 pub mod utils;
 
 use anyhow::{Error, Result};
 use clap::Parser;
-use classifier_grpc_server::classifier::image_classifier_server::ImageClassifierServer;
 use classifier_grpc_server::ClassifierServer;
 use env_logger::Env;
 use log::{error, info};
+use pb::classifier::image_classifier_server::ImageClassifierServer;
 use std::process::exit;
 use tokio::select;
 use tonic::transport::Server;

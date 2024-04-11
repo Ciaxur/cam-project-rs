@@ -1,8 +1,6 @@
 use crate::api::CameraApi;
-use crate::classifier_grpc_client::{
-  classifier::{ClassifyImageRequest, ClassifyImageResponse},
-  ClassifierClient,
-};
+use crate::classifier_grpc_client::ClassifierClient;
+use crate::pb::classifier::{ClassifyImageRequest, ClassifyImageResponse};
 use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
 
 use crate::config::{Config, ConfigCameraAPI};

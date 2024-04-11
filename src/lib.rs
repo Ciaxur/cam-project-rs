@@ -2,6 +2,7 @@ pub mod api;
 pub mod camera;
 pub mod classifier_grpc_client;
 pub mod config;
+pub mod pb;
 pub mod utils;
 
 use anyhow::Result;
@@ -11,8 +12,8 @@ use api::interfaces::CameraStreamResponse;
 use api::{AdjustedCameraBuffer, CameraApi, CameraApiOptions};
 use camera::worker::start_local_video_worker;
 use clap::Parser;
-use classifier_grpc_client::classifier::{ClassifyImageRequest, ClassifyImageResponse};
 use log::{debug, info};
+use pb::classifier::{ClassifyImageRequest, ClassifyImageResponse};
 use tokio::sync::mpsc;
 
 use crate::config::Config;

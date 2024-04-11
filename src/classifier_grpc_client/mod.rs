@@ -1,6 +1,4 @@
-pub mod classifier {
-  tonic::include_proto!("classifier");
-}
+use crate::pb::classifier;
 
 use anyhow::{Error, Result};
 use classifier::image_classifier_client::ImageClassifierClient;

@@ -1,8 +1,5 @@
-pub mod classifier {
-  tonic::include_proto!("classifier");
-}
-
 use crate::ort_backend::YoloOrtModel;
+use crate::pb::classifier;
 
 use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
 use anyhow::{Error, Result};

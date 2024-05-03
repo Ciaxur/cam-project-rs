@@ -94,7 +94,9 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             image_dir = f'{self.image_store_dir}/{image_subdir}'
             if not os.path.exists(image_dir):
                 os.makedirs(image_dir)
-            cv2.imwrite(f'{image_dir}/{filename}', image.image)
+            img_filepath = f'{image_dir}/{filename}'
+            cv2.imwrite(img_filepath, image.image)
+            logging.info(f'Saved image -> {img_filepath}')
         logging.info('Shutting down image writer thread')
 
     def detect(self, np_image: numpy.ndarray) -> Tuple[List[str], List[int], List[float], numpy.array]:
@@ -244,7 +246,7 @@ class ImageClassifierServer(image_classification_pb2_grpc.ImageClassifierService
             serlialized_frame: bytes = self.convert_numpy_to_jpeg_bytes(frame_np)
 
             # Offload storing the classified image to a thread, if one's active.
-            if self.image_store_active:
+            if self.image_store_active and 'person' in labels:
                 self.image_store_queue.put(ClassifiedImage(
                     image=frame_np,
                     name=request.device,

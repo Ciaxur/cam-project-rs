@@ -88,12 +88,20 @@ impl ImageClassifier for ClassifierServer {
               ..Default::default()
             };
 
-            if output.detections.len() > 0 {
+            // Only store human detections.
+            let mut is_human_detected = false;
+
+            if is_human_detected && output.detections.len() > 0 {
               for detection in output.detections {
                 for prediction in detection.predictions {
                   resp.matches.push(prediction.class_id as f32);
                   resp.match_scores.push(prediction.confidence as f32);
                   resp.labels.push(prediction.label);
+
+                  // Check for human class ids.
+                  if resp.matches.iter().any(|&i| i == 0.) {
+                    is_human_detected = true;
+                  }
                 }
               }
 

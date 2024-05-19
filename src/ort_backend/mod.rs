@@ -319,8 +319,8 @@ impl YoloOrtModel {
               let _color = self.color_palette[i];
               let color: Scalar = Scalar::new(_color.0, _color.1, _color.2, 0.);
               let label = self.labels.get(&id).unwrap();
-              draw_bbox(&mut yolo_output.img_mat, &adjusted_bbox, label, color);
-              draw_bbox(&mut yolo_output.resized_img_mat, &bbox, label, color);
+              draw_bbox(&mut yolo_output.img_mat, &adjusted_bbox, label, prob, color);
+              draw_bbox(&mut yolo_output.resized_img_mat, &bbox, label, prob, color);
 
               Some(YoloPrediction {
                 class_id: id as u32,
@@ -358,6 +358,14 @@ impl YoloOrtModel {
       ".jpeg",
       &yolo_output.img_mat,
       &mut yolo_output.img_vec,
+      &imwrite_flags,
+    )
+    .expect("encode output image");
+
+    opencv::imgcodecs::imencode(
+      ".jpeg",
+      &yolo_output.resized_img_mat,
+      &mut yolo_output.resized_img_vec,
       &imwrite_flags,
     )
     .expect("encode output image");
@@ -417,8 +425,9 @@ impl YoloOrtModel {
 /// * img: Mutable image to apply the bbox on.
 /// * bbox: Bbox structure.
 /// * label: Label to draw on the bbox.
+/// * conf: Confidence percentage as part of label.
 /// * color: Color used for bbox and label.
-fn draw_bbox(img: &mut Mat, bbox: &Bbox, label: &str, color: Scalar) {
+fn draw_bbox(img: &mut Mat, bbox: &Bbox, label: &str, conf: f64, color: Scalar) {
   // Add detections to input image.
   imgproc::rectangle(
     img,
@@ -433,10 +442,11 @@ fn draw_bbox(img: &mut Mat, bbox: &Bbox, label: &str, color: Scalar) {
   // Add label to the image.
   let text_origin_x = bbox.x;
   let text_origin_y = bbox.y;
+  let label = format!("{label}: {conf:.2}").to_string();
 
   imgproc::put_text(
     img,
-    label,
+    label.as_str(),
     Point::new(text_origin_x as i32, text_origin_y as i32),
     imgproc::FONT_HERSHEY_SIMPLEX,
     0.5,

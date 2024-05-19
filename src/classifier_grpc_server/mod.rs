@@ -19,8 +19,8 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<ClassifyImageResponse, St
 pub struct ClassifierServer {
   model: Arc<YoloOrtModel>,
 
-  // List of accepted class ids to store.
-  accepted_classes_to_store: Vec<u64>,
+  // List of accepted class ids to respond with and locally store.
+  accepted_class_ids: Vec<u64>,
 
   // Storage manager instances used to locally store detected images.
   _storage_manager: Arc<StorageManager>,
@@ -34,19 +34,19 @@ impl ClassifierServer {
   /// * onnx_model_path: Path to the ONNX Yolo model.
   /// * prob_threshold: Confidence threshold for which to filter on results.
   /// * image_storage_path: Storage path for which to store matched images in.
-  /// * accepted_classes_to_store: List of class ids to store.
+  /// * accepted_classes: List of class ids. These will issue a response and be stored locally.
   pub fn new(
     onnx_model_path: String,
     prob_threshold: f64,
     image_storage_path: String,
-    accepted_classes_to_store: Vec<u64>,
+    accepted_classes: Vec<u64>,
   ) -> Result<Self, Error> {
     let mut storage_manager = StorageManager::new(image_storage_path, 2048);
     let storage_manager_tx: Sender<StorageManagerFile> = storage_manager.start();
 
     Ok(Self {
       model: Arc::new(YoloOrtModel::new(onnx_model_path, prob_threshold)?),
-      accepted_classes_to_store,
+      accepted_class_ids: accepted_classes,
       _storage_manager: Arc::new(storage_manager),
       storage_manager_tx: Arc::new(storage_manager_tx),
     })
@@ -72,7 +72,7 @@ impl ImageClassifier for ClassifierServer {
     // - https://stackoverflow.com/questions/72403669/tokio-tonic-how-to-fix-this-error-self-has-lifetime-life0-but-it-needs
     let model = self.model.clone();
     let storage_manager = self.storage_manager_tx.clone();
-    let accepted_classes_to_store = self.accepted_classes_to_store.clone();
+    let accepted_class_ids = self.accepted_class_ids.clone();
     let output_stream = async_stream::try_stream! {
       while let Some(req) = req_stream.next().await {
         let req = req?;
@@ -107,7 +107,7 @@ impl ImageClassifier for ClassifierServer {
               info!("Detection: labels={:?} | ids={:?} | confidence={:?}", resp.labels, resp.matches, resp.match_scores);
 
               // Only store accepted matches.
-              if resp.matches.clone().into_iter().any(|v| accepted_classes_to_store.contains(&(v as u64))) {
+              if resp.matches.clone().into_iter().any(|v| accepted_class_ids.contains(&(v as u64))) {
                 // Add to storage manager to store.
                 let status = storage_manager.send(StorageManagerFile{
                   data: resp.image.clone(),
@@ -118,7 +118,11 @@ impl ImageClassifier for ClassifierServer {
                 if let Err(err) = status {
                   error!("Failed to send {} device image for local storage -> {}", resp.device, err);
                 }
+              } else {
+                continue
               }
+            } else {
+              continue
             }
 
             info!("Request handler took {:?}s to complete", req_handler_dt.elapsed());

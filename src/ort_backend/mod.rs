@@ -1,3 +1,4 @@
+// TODO: why is the client stopping? also why is the stream lagging behind?
 use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Error, Result};

@@ -206,6 +206,11 @@ async fn stream_call(
       Result::Ok(Some(val)) means the sender streamed a valid response message val.
   */
   info!("ClassifierClient: Starting consumer");
+
+  // Keep track of consumer statistics.
+  let mut consumption_per_second = 0;
+  let mut last_consuption = Instant::now();
+
   let mut resp_stream = classify_response.into_inner();
   loop {
     // Concurrently consume server responses and client requests via
@@ -219,6 +224,18 @@ async fn stream_call(
                 "ClassifierClient: Received -> (device{} | matches={:?} | scores={:?})",
                 msg.device, msg.matches, msg.match_scores,
               );
+
+              // Track consumption statistics.
+              consumption_per_second += 1;
+              if last_consuption.elapsed().as_secs_f64() >= 1.0 {
+                info!(
+                  "ClassifierClient: gRPC responses consumed {}/{:.2}s",
+                  consumption_per_second,
+                  last_consuption.elapsed().as_secs_f64()
+                );
+                last_consuption = Instant::now();
+                consumption_per_second = 0;
+              }
 
               tx_response.send(msg).await.map_err(|err| {
                 Error::msg(

@@ -1,12 +1,13 @@
 use crate::api::CameraApi;
 use crate::classifier_grpc_client::ClassifierClient;
 use crate::pb::classifier::{ClassifyImageRequest, ClassifyImageResponse};
-use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
-
 use crate::config::client::{ClientConfig, ConfigCameraAPI};
+
+
 use anyhow::{Error, Result};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
+use utils::storage::storage_manager::{StorageManager, StorageManagerFile};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 

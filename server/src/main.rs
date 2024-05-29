@@ -1,10 +1,9 @@
 pub mod classifier_grpc_server;
 pub mod ort_backend;
 pub mod pb;
-pub mod utils;
 
 use anyhow::{Error, Result};
-use apartment_cam::config::server::ServerConfig;
+use server::config::server::ServerConfig;
 use clap::Parser;
 use classifier_grpc_server::ClassifierServer;
 use env_logger::Env;

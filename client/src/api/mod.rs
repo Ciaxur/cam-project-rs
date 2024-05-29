@@ -2,6 +2,9 @@ pub mod camera_api_client_worker;
 pub mod classifier_worker;
 pub mod interfaces;
 pub mod ndarray_util;
+
+use crate::config::client::ConfigCameraAPI;
+
 use anyhow::{Error, Result};
 use base64::{engine::general_purpose as b64, Engine as _};
 use interfaces::{CameraEntry, CameraListResponse, CameraSnapResponse, CameraStreamResponse};
@@ -17,7 +20,6 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::Sender;
 use tokio::time::{Duration, Instant};
 
-use crate::config::client::ConfigCameraAPI;
 
 /// Helper function for loading in certificates for mTLS.
 ///

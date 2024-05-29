@@ -1,7 +1,6 @@
 use crate::ort_backend::YoloOrtModel;
 use crate::pb::classifier;
 
-use crate::utils::storage_manager::{StorageManager, StorageManagerFile};
 use anyhow::{Error, Result};
 use classifier::image_classifier_server::ImageClassifier;
 use classifier::{ClassifyImageRequest, ClassifyImageResponse};
@@ -12,6 +11,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::Instant;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
+use utils::storage::storage_manager::{StorageManager, StorageManagerFile};
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<ClassifyImageResponse, Status>> + Send>>;
 
